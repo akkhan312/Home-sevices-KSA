@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# User uploads (profile photos, payment receipts, chat media)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Expo / build output
+.expo/
+home-services-app/dist/
+home-services-app/web-build/
+
+# Logs & OS files
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db

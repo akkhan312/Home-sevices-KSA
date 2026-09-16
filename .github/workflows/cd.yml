@@ -1,0 +1,97 @@
+name: CD
+
+# Runs the full CI suite first; deploys only if every check passes.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mobile_build:
+        description: 'Also start EAS builds for Android & iOS'
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  backend-image:
+    name: Backend — build & push Docker image
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image name
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/backend" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  backend-deploy:
+    name: Backend — trigger hosting deploy
+    needs: backend-image
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # Works with any host that supports a deploy webhook (Render, Railway, Coolify, ...).
+      # Configure the BACKEND_DEPLOY_HOOK_URL secret in the "production" environment to enable it.
+      - name: Call deploy hook
+        env:
+          HOOK: ${{ secrets.BACKEND_DEPLOY_HOOK_URL }}
+          IMAGE: ${{ needs.backend-image.outputs.image }}:${{ github.sha }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::BACKEND_DEPLOY_HOOK_URL is not set — image $IMAGE was pushed but no deploy was triggered."
+            exit 0
+          fi
+          curl --fail --silent --show-error -X POST "$HOOK"
+          echo "Deploy triggered for $IMAGE"
+
+  mobile-build:
+    name: Mobile — EAS build (Android & iOS)
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.mobile_build
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: home-services-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: home-services-app/package-lock.json
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - name: Start production builds
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+          EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+        run: eas build --platform all --profile production --non-interactive --no-wait

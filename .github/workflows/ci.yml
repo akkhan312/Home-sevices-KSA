@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    # main is covered by the CD workflow, which runs this suite before deploying.
+    branches-ignore: [main]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend — lint, tests, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Syntax check
+        run: npm run lint
+      - name: Workflow & security tests (payment lock, commission, payouts, reviews)
+        run: npm test
+      - name: Dependency audit (production, high+)
+        run: npm audit --omit=dev --audit-level=high
+
+  database:
+    name: Database — schema applies, is idempotent, enforces constraints
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: servehome
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: servehome
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema (fresh database)
+        run: psql -v ON_ERROR_STOP=1 -q -f backend/supabase-schema.sql
+      - name: Re-apply schema (idempotency)
+        run: psql -v ON_ERROR_STOP=1 -q -f backend/supabase-schema.sql
+      - name: Constraint assertions
+        run: psql -v ON_ERROR_STOP=1 -f backend/test/sql/constraints.sql
+
+  app:
+    name: App — typecheck, expo-doctor, web build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: home-services-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: home-services-app/package-lock.json
+      - run: npm ci
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Expo doctor
+        run: npx expo-doctor
+      - name: Web export
+        env:
+          EXPO_PUBLIC_API_URL: https://api.example.com
+        run: npx expo export --platform web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: home-services-app/dist
+          retention-days: 7

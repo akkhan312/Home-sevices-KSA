@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "ServeHome",
+    "slug": "servehome-app",
+    "version": "1.0.0",
+    "scheme": "home-services-app",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.servemate.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "ServeHome needs access to your location so you can share your current or live location with service providers.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "ServeHome needs background location access to share live location updates during active service bookings.",
+        "NSLocationAlwaysUsageDescription": "ServeHome needs background location access to share live location updates."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.servemate.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "ServeHome needs access to your location so you can share your current or live location with service providers."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.servemate",
+          "enableGooglePay": true
+        }
+      ],
+      "@react-native-google-signin/google-signin",
+      "expo-font"
+    ]
+  }
+}
