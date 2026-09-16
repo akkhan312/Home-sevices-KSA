@@ -468,6 +468,7 @@ const en = {
       startService: 'Start Service',
       completeService: 'Complete Service',
       awaitingApproval: 'Your account is awaiting admin approval.',
+      earningsNote: 'The customer pays ServeHome upfront. Your earnings are paid to you after the customer confirms the service.',
     },
     completion: {
       title: 'Provider marked this service as completed.',
@@ -492,6 +493,7 @@ const en = {
       title: 'Proposals',
       waiting: 'Your request has been sent to available providers.',
       waitingSub: 'Proposals will appear here as providers respond.',
+      compare: 'Compare price, rating and arrival time, then select a provider.',
       select: 'Select Provider',
       selected: 'Selected',
       viewProfile: 'View profile',

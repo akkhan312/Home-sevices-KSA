@@ -225,7 +225,7 @@ export default function OrderTracking() {
             <View style={styles.biddingHeaderCard}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.biddingHeaderTitle}>{t('workflow.proposals.title')}</Text>
-                <Text style={styles.biddingHeaderSub}>{t('workflow.proposals.waitingSub')}</Text>
+                <Text style={styles.biddingHeaderSub}>{offers.length ? t('workflow.proposals.compare') : t('workflow.proposals.waitingSub')}</Text>
               </View>
               <View style={styles.budgetBadgeWrap}>
                 <Text style={styles.budgetLabel}>SAR</Text>

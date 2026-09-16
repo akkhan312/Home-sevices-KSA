@@ -309,7 +309,7 @@ export default function ProviderJobDetails() {
           <View style={styles.escrowNoteBox}>
             <Ionicons name="shield-checkmark-outline" size={18} color="#10B981" />
             <Text style={styles.escrowNoteText}>
-              {t('workflow.payment.escrow')}
+              {t('workflow.provider.earningsNote')}
             </Text>
           </View>
         </View>

@@ -196,7 +196,7 @@ export default function AdminPaymentsScreen() {
         <Line label="Provider payout" value={sar(item.amount)} strong />
       </View>
 
-      <TouchableOpacity style={[styles.btn, styles.approve, { marginTop: 12 }]} onPress={() => setPaying(item)} disabled={item.bookingStatus === 'disputed'}>
+      <TouchableOpacity style={[styles.fullBtn, styles.approve]} onPress={() => setPaying(item)} disabled={item.bookingStatus === 'disputed'}>
         <Ionicons name="cash-outline" size={18} color="#fff" />
         <Text style={styles.btnText}>MARK AS PAID</Text>
       </TouchableOpacity>
@@ -333,6 +333,7 @@ const styles = StyleSheet.create({
   receiptText: { fontWeight: '800', color: '#1E3A5F' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   btn: { flex: 1, height: 48, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  fullBtn: { height: 48, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12 },
   approve: { backgroundColor: '#059669' },
   reject: { backgroundColor: '#DC2626' },
   btnText: { color: '#fff', fontWeight: '900', letterSpacing: 0.5 },

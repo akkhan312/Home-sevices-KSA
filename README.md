@@ -9,6 +9,38 @@ Built with **React Native (Expo SDK 54)** for Android, iOS and web, and a **Node
 
 ---
 
+## 📱 Screenshots
+
+<sub>Captured from the web build of the app connected to the real API, seeded with demo data (names, bank details and orders are fictional).</sub>
+
+### Customer
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/03-customer-home.png" width="220" alt="Customer home with active order"/><br/><b>Home & active order</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/04-proposals.png" width="220" alt="Comparing provider proposals"/><br/><b>Compare proposals</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/05-payment-required.png" width="220" alt="Bank transfer payment screen"/><br/><b>Payment required</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/06-communication-unlocked.png" width="220" alt="Communication unlocked and order timeline"/><br/><b>Unlocked after payment</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/07-chat.png" width="220" alt="Order chat"/><br/><b>Order chat</b></td>
+    <td align="center"><img src="docs/screenshots/12-arabic-payment.png" width="220" alt="Arabic payment screen"/><br/><b>العربية</b></td>
+    <td align="center"><img src="docs/screenshots/01-onboarding.png" width="220" alt="Onboarding"/><br/><b>Onboarding</b></td>
+    <td align="center"><img src="docs/screenshots/02-login.png" width="220" alt="Login"/><br/><b>Login</b></td>
+  </tr>
+</table>
+
+### Provider & Admin
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/08-provider-waiting-payment.png" width="220" alt="Provider waiting for payment with communication locked"/><br/><b>Provider: waiting for payment</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/09-admin-verify-payment.png" width="220" alt="Admin payment verification"/><br/><b>Admin: verify payment</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/10-admin-payouts.png" width="220" alt="Admin provider payouts"/><br/><b>Admin: provider payout</b></td>
+    <td align="center" width="25%"><img src="docs/screenshots/11-admin-settings.png" width="220" alt="Admin bank and commission settings"/><br/><b>Admin: commission rules</b></td>
+  </tr>
+</table>
+
+---
+
 ## ✨ The core flow
 
 ```
