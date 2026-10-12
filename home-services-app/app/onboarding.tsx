@@ -19,6 +19,7 @@ interface Slide {
   gradient: readonly [string, string, string];
   image: any;
   accentColor: string;
+  /** Translation keys. */
   features: { icon: string; label: string }[];
   tagline: string;
 }
@@ -31,12 +32,12 @@ const SLIDES: Slide[] = [
     gradient: ['#1E3A5F', '#163058', '#0F2444'] as const,
     image: require('../assets/onboarding1.jpg'),
     accentColor: '#2E8B57',
-    tagline: '100+ Services Available',
+    tagline: 'onboarding.tagline1',
     features: [
-      { icon: 'water-outline', label: 'Cleaning' },
-      { icon: 'construct-outline', label: 'Plumbing' },
-      { icon: 'flash-outline', label: 'Electrical' },
-      { icon: 'thermometer-outline', label: 'AC Repair' },
+      { icon: 'water-outline', label: 'categories.cleaning' },
+      { icon: 'construct-outline', label: 'categories.plumbing' },
+      { icon: 'flash-outline', label: 'categories.electrical' },
+      { icon: 'snow-outline', label: 'categories.ac' },
     ],
   },
   {
@@ -46,12 +47,12 @@ const SLIDES: Slide[] = [
     gradient: ['#155E36', '#1A6E40', '#2E8B57'] as const,
     image: require('../assets/onboarding2.jpg'),
     accentColor: '#F59E0B',
-    tagline: 'Earn on your own schedule',
+    tagline: 'onboarding.tagline2',
     features: [
-      { icon: 'list-outline', label: 'Receive Jobs' },
-      { icon: 'wallet-outline', label: 'Earn Money' },
-      { icon: 'card-outline', label: 'Withdraw Funds' },
-      { icon: 'shield-checkmark-outline', label: 'Verified Profile' },
+      { icon: 'list-outline', label: 'onboarding.f2a' },
+      { icon: 'pricetag-outline', label: 'onboarding.f2b' },
+      { icon: 'business-outline', label: 'onboarding.f2c' },
+      { icon: 'shield-checkmark-outline', label: 'onboarding.f2d' },
     ],
   },
   {
@@ -61,12 +62,12 @@ const SLIDES: Slide[] = [
     gradient: ['#4338CA', '#5046E4', '#6366F1'] as const,
     image: require('../assets/onboarding3.jpg'),
     accentColor: '#F59E0B',
-    tagline: 'Safe & Secure Payments',
+    tagline: 'onboarding.tagline3',
     features: [
-      { icon: 'lock-closed-outline', label: 'Escrow' },
-      { icon: 'card-outline', label: 'Visa / Mastercard' },
-      { icon: 'shield-checkmark-outline', label: 'SSL Secured' },
-      { icon: 'checkmark-circle-outline', label: 'Satisfaction' },
+      { icon: 'lock-closed-outline', label: 'onboarding.f3a' },
+      { icon: 'chatbubbles-outline', label: 'onboarding.f3b' },
+      { icon: 'star-outline', label: 'onboarding.f3c' },
+      { icon: 'shield-half-outline', label: 'onboarding.f3d' },
     ],
   },
 ];
@@ -123,7 +124,7 @@ export default function OnboardingScreen() {
           {/* Tagline badge */}
           <View style={[styles.taglineBadge, { backgroundColor: item.accentColor }]}>
             <Ionicons name="sparkles" size={12} color="#fff" />
-            <Text style={styles.taglineText}>{item.tagline}</Text>
+            <Text style={styles.taglineText}>{t(item.tagline)}</Text>
           </View>
         </View>
 
@@ -132,7 +133,7 @@ export default function OnboardingScreen() {
           {item.features.map((f, i) => (
             <View key={i} style={[styles.featurePill, { backgroundColor: 'rgba(255,255,255,0.12)', borderColor: 'rgba(255,255,255,0.2)' }]}>
               <Ionicons name={f.icon as any} size={14} color="#fff" />
-              <Text style={styles.featurePillText}>{f.label}</Text>
+              <Text style={styles.featurePillText}>{t(f.label)}</Text>
             </View>
           ))}
         </View>

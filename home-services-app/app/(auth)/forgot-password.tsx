@@ -7,10 +7,14 @@ import {
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
+import { useFlipStyle } from '../../src/utils/rtl';
 import { API, fetchWithTimeout } from '../../src/config/api';
 import { Colors, Shadows } from '../../src/theme';
 
 export default function ForgotPasswordScreen() {
+  const { t } = useTranslation();
+  const flip = useFlipStyle();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [email, setEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -27,7 +31,7 @@ export default function ForgotPasswordScreen() {
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`Server returned unexpected response (${res.status}). Please try again.`);
+      throw new Error(t('errors.serverError'));
     }
   };
 
@@ -35,7 +39,7 @@ export default function ForgotPasswordScreen() {
   const handleSendOtp = async () => {
     setErrorMsg('');
     if (!email || !email.includes('@')) {
-      setErrorMsg('Please enter a valid email address.');
+      setErrorMsg(t('auth.invalidEmail'));
       return;
     }
 
@@ -47,7 +51,7 @@ export default function ForgotPasswordScreen() {
         body: JSON.stringify({ email: email.toLowerCase().trim() }),
       });
       const data = await parseJsonResponse(res);
-      if (!res.ok) throw new Error(data.error || 'Failed to send code');
+      if (!res.ok) throw new Error(data.error || t('workflow.errors.generic'));
 
       setOtpCode('');
       setStep(2);
@@ -62,7 +66,7 @@ export default function ForgotPasswordScreen() {
   const handleVerifyOtp = async () => {
     setErrorMsg('');
     if (!otpCode || otpCode.length !== 4) {
-      setErrorMsg('Please enter the 4-digit verification code.');
+      setErrorMsg(t('forgot.codeHint'));
       return;
     }
 
@@ -74,7 +78,7 @@ export default function ForgotPasswordScreen() {
         body: JSON.stringify({ email: email.toLowerCase().trim(), code: otpCode }),
       });
       const data = await parseJsonResponse(res);
-      if (!res.ok) throw new Error(data.error || 'Invalid code');
+      if (!res.ok) throw new Error(data.error || t('forgot.invalidCode'));
 
       setResetToken(data.resetToken);
       setStep(3);
@@ -89,11 +93,11 @@ export default function ForgotPasswordScreen() {
   const handleResetPassword = async () => {
     setErrorMsg('');
     if (!newPassword || newPassword.length < 6) {
-      setErrorMsg('Password must be at least 6 characters.');
+      setErrorMsg(t('auth.passwordMin'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
+      setErrorMsg(t('forgot.mismatch'));
       return;
     }
 
@@ -105,12 +109,12 @@ export default function ForgotPasswordScreen() {
         body: JSON.stringify({ resetToken, password: newPassword }),
       });
       const data = await parseJsonResponse(res);
-      if (!res.ok) throw new Error(data.error || 'Failed to reset password');
+      if (!res.ok) throw new Error(data.error || t('workflow.errors.generic'));
 
       Alert.alert(
-        '🎉 Password Reset Complete',
-        'Your password has been updated successfully. Please log in with your new password.',
-        [{ text: 'Log In Now', onPress: () => router.replace('/(auth)/login') }]
+        `🎉 ${t('forgot.doneTitle')}`,
+        t('forgot.doneBody'),
+        [{ text: t('auth.login'), onPress: () => router.replace('/(auth)/login') }]
       );
     } catch (e: any) {
       setErrorMsg(e.message);
@@ -127,10 +131,9 @@ export default function ForgotPasswordScreen() {
         {/* Brand Area */}
         <View style={styles.brandArea}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backTopBtn}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color="#fff" style={flip} />
           </TouchableOpacity>
-          <Text style={styles.brand}>Forgot Password</Text>
-          <Text style={styles.brandSub}>إعادة تعيين كلمة المرور</Text>
+          <Text style={styles.brand}>{t('auth.forgotPassword')}</Text>
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
@@ -154,11 +157,11 @@ export default function ForgotPasswordScreen() {
             {/* STEP 1: Enter Email */}
             {step === 1 && (
               <>
-                <Text style={styles.title}>Find Your Account</Text>
-                <Text style={styles.subTitle}>Enter your registered email address to receive a 4-digit verification code.</Text>
+                <Text style={styles.title}>{t('forgot.findTitle')}</Text>
+                <Text style={styles.subTitle}>{t('forgot.findBody')}</Text>
 
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="mail-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 14 }} />
+                  <Ionicons name="mail-outline" size={18} color={Colors.textMuted} style={{ marginStart: 14 }} />
                   <TextInput
                     style={styles.input}
                     placeholder="name@example.com"
@@ -174,8 +177,8 @@ export default function ForgotPasswordScreen() {
                   <LinearGradient colors={Colors.gradientAccent} style={styles.btnGrad}>
                     {loading ? <ActivityIndicator color="#fff" /> : (
                       <>
-                        <Text style={styles.btnText}>Send Verification Code</Text>
-                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                        <Text style={styles.btnText}>{t('forgot.send')}</Text>
+                        <Ionicons name="arrow-forward" size={18} color="#fff" style={flip} />
                       </>
                     )}
                   </LinearGradient>
@@ -186,11 +189,11 @@ export default function ForgotPasswordScreen() {
             {/* STEP 2: Enter OTP */}
             {step === 2 && (
               <>
-                <Text style={styles.title}>Verify Code</Text>
-                <Text style={styles.subTitle}>Enter the 4-digit verification code sent to <Text style={{ fontWeight: 'bold' }}>{email}</Text>.</Text>
+                <Text style={styles.title}>{t('forgot.verifyTitle')}</Text>
+                <Text style={styles.subTitle}>{t('forgot.verifyBody', { email })}</Text>
 
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="shield-checkmark-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 14 }} />
+                  <Ionicons name="shield-checkmark-outline" size={18} color={Colors.textMuted} style={{ marginStart: 14 }} />
                   <TextInput
                     style={[styles.input, { letterSpacing: 8, fontSize: 20, fontWeight: 'bold' }]}
                     placeholder="••••"
@@ -206,15 +209,15 @@ export default function ForgotPasswordScreen() {
                   <LinearGradient colors={Colors.gradientAccent} style={styles.btnGrad}>
                     {loading ? <ActivityIndicator color="#fff" /> : (
                       <>
-                        <Text style={styles.btnText}>Verify & Continue</Text>
-                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                        <Text style={styles.btnText}>{t('forgot.verify')}</Text>
+                        <Ionicons name="arrow-forward" size={18} color="#fff" style={flip} />
                       </>
                     )}
                   </LinearGradient>
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={handleSendOtp} style={{ marginTop: 14, alignItems: 'center' }}>
-                  <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13 }}>Resend Code</Text>
+                  <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13 }}>{t('forgot.resend')}</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -222,14 +225,14 @@ export default function ForgotPasswordScreen() {
             {/* STEP 3: Reset Password */}
             {step === 3 && (
               <>
-                <Text style={styles.title}>Create New Password</Text>
-                <Text style={styles.subTitle}>Your code is verified! Enter your new password below.</Text>
+                <Text style={styles.title}>{t('forgot.newTitle')}</Text>
+                <Text style={styles.subTitle}>{t('forgot.newBody')}</Text>
 
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 14 }} />
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textMuted} style={{ marginStart: 14 }} />
                   <TextInput
                     style={styles.input}
-                    placeholder="New Password (min 6 chars)"
+                    placeholder={t('forgot.newPassword')}
                     placeholderTextColor={Colors.textMuted}
                     value={newPassword}
                     onChangeText={setNewPassword}
@@ -241,10 +244,10 @@ export default function ForgotPasswordScreen() {
                 </View>
 
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 14 }} />
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textMuted} style={{ marginStart: 14 }} />
                   <TextInput
                     style={styles.input}
-                    placeholder="Confirm New Password"
+                    placeholder={t('forgot.confirmPassword')}
                     placeholderTextColor={Colors.textMuted}
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
@@ -256,7 +259,7 @@ export default function ForgotPasswordScreen() {
                   <LinearGradient colors={Colors.gradientAccent} style={styles.btnGrad}>
                     {loading ? <ActivityIndicator color="#fff" /> : (
                       <>
-                        <Text style={styles.btnText}>Update Password</Text>
+                        <Text style={styles.btnText}>{t('forgot.update')}</Text>
                         <Ionicons name="checkmark-circle" size={18} color="#fff" />
                       </>
                     )}

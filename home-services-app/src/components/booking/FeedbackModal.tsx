@@ -31,7 +31,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
   visible,
   onClose,
   bookingId,
-  providerName = 'Provider',
+  providerName = '',
   onSubmitFeedback
 }) => {
   const { t } = useTranslation();
@@ -47,7 +47,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
       await onSubmitFeedback({ rating, reviewText: reviewText.trim(), recommend, ...scores });
       onClose();
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to submit review.');
+      Alert.alert(t('common.error'), err.message || t('workflow.errors.generic'));
     } finally {
       setLoading(false);
     }
@@ -64,7 +64,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.subTitle}>How was your experience with {providerName}?</Text>
+          <Text style={styles.subTitle}>{t('feedback.subtitle', { name: providerName })}</Text>
 
           {/* Star Rating Row */}
           <View style={styles.starsRow}>
@@ -96,14 +96,14 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 
           {/* Review Input */}
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Written Review (Optional)</Text>
+            <Text style={styles.label}>{t('feedback.written')}</Text>
             <TextInput
               style={styles.textArea}
               value={reviewText}
               onChangeText={setReviewText}
               multiline
               numberOfLines={3}
-              placeholder="Tell others about the quality of work, punctuality, and politeness..."
+              placeholder={t('feedback.placeholder')}
               placeholderTextColor="#64748B"
             />
           </View>
@@ -118,9 +118,9 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               name={recommend ? 'checkbox' : 'square-outline'}
               size={22}
               color={recommend ? '#10B981' : '#64748B'}
-              style={{ marginRight: 8 }}
+              style={{ marginEnd: 8 }}
             />
-            <Text style={styles.recommendText}>I would recommend this provider to friends & neighbors</Text>
+            <Text style={styles.recommendText}>{t('feedback.recommend')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity onPress={handleSubmit} disabled={loading} activeOpacity={0.88}>
@@ -129,8 +129,8 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="ribbon" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.submitBtnText}>Submit Rating & Review</Text>
+                  <Ionicons name="ribbon" size={18} color="#FFFFFF" style={{ marginEnd: 6 }} />
+                  <Text style={styles.submitBtnText}>{t('reviews.submitReview')}</Text>
                 </>
               )}
             </LinearGradient>

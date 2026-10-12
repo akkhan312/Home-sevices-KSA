@@ -10,9 +10,9 @@ import {
   useWindowDimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API } from '../../src/config/api';
+import { useTranslation } from 'react-i18next';
+import { apiFetch } from '../../src/services/apiClient';
+import { BackButton } from '../../src/components/ui/BackButton';
 
 interface AnalyticsData {
   summary: {
@@ -35,6 +35,7 @@ interface AnalyticsData {
 }
 
 export default function AdminAnalyticsScreen() {
+  const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AnalyticsData | null>(null);
@@ -49,20 +50,8 @@ export default function AdminAnalyticsScreen() {
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('jwt_token');
-      if (token) {
-        const res = await fetch(`${API}/admin/analytics`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (json && json.summary) {
-            setData(json);
-            return;
-          }
-        }
-      }
-      setData(null);
+      const json = await apiFetch<AnalyticsData>('/admin/analytics');
+      setData(json && json.summary ? json : null);
     } catch (e) {
       console.error('Fetch analytics error:', e);
       setData(null);
@@ -84,34 +73,31 @@ export default function AdminAnalyticsScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.headerWrapper}>
           <View style={styles.headerContent}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={20} color="#F8FAFC" />
-            </TouchableOpacity>
-            <Text style={styles.title}>SaaS Business Analytics</Text>
+            <BackButton dark />
+            <Text style={[styles.title, { marginStart: 12 }]}>{t('analytics.title')}</Text>
           </View>
         </View>
         <View style={styles.center}>
           <Ionicons name="stats-chart-outline" size={54} color="#334155" />
-          <Text style={styles.emptyTitle}>No Analytics Data Yet</Text>
-          <Text style={styles.emptySub}>Analytics will generate automatically as bookings are completed on the platform.</Text>
+          <Text style={styles.emptyTitle}>{t('analytics.emptyTitle')}</Text>
+          <Text style={styles.emptySub}>{t('analytics.emptyBody')}</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   const maxRevenue = Math.max(...data.monthlyTrend.map((m) => m.revenue), 100);
+  const takeRate = data.summary.totalRevenue ? Math.round((data.summary.platformFeeTotal / data.summary.totalRevenue) * 1000) / 10 : 0;
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.headerWrapper}>
         <View style={styles.headerContent}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={20} color="#F8FAFC" />
-          </TouchableOpacity>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.title}>SaaS Business Analytics</Text>
-            <Text style={styles.subtitle}>Financial growth, fee breakdown & order stats</Text>
+          <BackButton dark />
+          <View style={{ flex: 1, marginStart: 12 }}>
+            <Text style={styles.title}>{t('analytics.title')}</Text>
+            <Text style={styles.subtitle}>{t('analytics.subtitle')}</Text>
           </View>
           <TouchableOpacity style={styles.refreshBtn} onPress={fetchAnalytics}>
             <Ionicons name="refresh" size={18} color="#3B82F6" />
@@ -126,20 +112,20 @@ export default function AdminAnalyticsScreen() {
         {/* Top Key Metrics Row */}
         <View style={[styles.metricsGrid, isWide && { flexWrap: 'nowrap' }]}>
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Total Gross Revenue</Text>
-            <Text style={styles.metricValue}>SAR {data.summary.totalRevenue.toFixed(0)}</Text>
+            <Text style={styles.metricLabel}>{t('analytics.revenue')}</Text>
+            <Text style={styles.metricValue}>{t('common.sar', { amount: data.summary.totalRevenue.toFixed(0) })}</Text>
             <View style={styles.trendRow}>
-              <Ionicons name="trending-up" size={14} color="#10B981" />
-              <Text style={styles.trendText}>Live Production Metrics</Text>
+              <Ionicons name="calendar-outline" size={14} color="#10B981" />
+              <Text style={styles.trendText}>{t('analytics.thisMonth', { amount: data.summary.monthlyRevenue.toFixed(0) })}</Text>
             </View>
           </View>
 
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Platform Fee (15%)</Text>
-            <Text style={[styles.metricValue, { color: '#60A5FA' }]}>SAR {data.summary.platformFeeTotal.toFixed(0)}</Text>
+            <Text style={styles.metricLabel}>{t('analytics.commission')}</Text>
+            <Text style={[styles.metricValue, { color: '#60A5FA' }]}>{t('common.sar', { amount: data.summary.platformFeeTotal.toFixed(0) })}</Text>
             <View style={styles.trendRow}>
               <Ionicons name="pie-chart" size={14} color="#60A5FA" />
-              <Text style={[styles.trendText, { color: '#60A5FA' }]}>15% Take Rate</Text>
+              <Text style={[styles.trendText, { color: '#60A5FA' }]}>{t('analytics.takeRate', { rate: takeRate })}</Text>
             </View>
           </View>
         </View>
@@ -149,19 +135,19 @@ export default function AdminAnalyticsScreen() {
           <View style={styles.metricCardSec}>
             <Ionicons name="people" size={20} color="#F59E0B" />
             <Text style={styles.secVal}>{data.summary.activeProviders}</Text>
-            <Text style={styles.secLabel}>Active Providers</Text>
+            <Text style={styles.secLabel}>{t('admin.providers')}</Text>
           </View>
 
           <View style={styles.metricCardSec}>
             <Ionicons name="person" size={20} color="#3B82F6" />
             <Text style={styles.secVal}>{data.summary.activeCustomers}</Text>
-            <Text style={styles.secLabel}>Registered Customers</Text>
+            <Text style={styles.secLabel}>{t('admin.customers')}</Text>
           </View>
 
           <View style={styles.metricCardSec}>
             <Ionicons name="checkmark-done-circle" size={20} color="#10B981" />
             <Text style={styles.secVal}>{data.summary.completedOrders}</Text>
-            <Text style={styles.secLabel}>Jobs Completed</Text>
+            <Text style={styles.secLabel}>{t('provider.jobsCompleted')}</Text>
           </View>
         </View>
 
@@ -169,7 +155,7 @@ export default function AdminAnalyticsScreen() {
         <View style={isWide ? styles.twoColRow : undefined}>
           {/* Bar Chart — Revenue Trend */}
           <View style={[styles.chartCard, isWide && { flex: 1 }]}>
-            <Text style={styles.chartTitle}>Monthly Revenue Growth (SAR)</Text>
+            <Text style={styles.chartTitle}>{t('analytics.monthly')}</Text>
             <View style={styles.barChartContainer}>
               {data.monthlyTrend.map((item, idx) => {
                 const barHeight = Math.max(15, (item.revenue / maxRevenue) * 120);
@@ -186,7 +172,7 @@ export default function AdminAnalyticsScreen() {
 
           {/* Category Breakdown Progress Cards */}
           <View style={[styles.chartCard, isWide && { flex: 1 }]}>
-            <Text style={styles.chartTitle}>Category Revenue Distribution</Text>
+            <Text style={styles.chartTitle}>{t('analytics.byService')}</Text>
             {(() => {
               const totalCatSum = data.categoryBreakdown.reduce((sum, c) => sum + Number(c.value || 0), 0) || 1;
               return data.categoryBreakdown.map((cat, idx) => {
@@ -195,7 +181,7 @@ export default function AdminAnalyticsScreen() {
                   <View key={idx} style={styles.catRow}>
                     <View style={styles.catInfoRow}>
                       <Text style={styles.catName}>{cat.name}</Text>
-                      <Text style={styles.catVal}>SAR {cat.value} ({pct}%)</Text>
+                      <Text style={styles.catVal}>{t('common.sar', { amount: cat.value })} ({pct}%)</Text>
                     </View>
                     <View style={styles.catBarTrack}>
                       <View style={[styles.catBarFill, { width: `${Math.max(5, pct)}%` }]} />
@@ -209,9 +195,9 @@ export default function AdminAnalyticsScreen() {
 
         {/* Top Provider Leaders */}
         <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Top Provider Earnings Leaders</Text>
+          <Text style={styles.chartTitle}>{t('analytics.topProviders')}</Text>
           {data.topProviders.length === 0 ? (
-            <Text style={{ color: '#64748B', fontSize: 12 }}>No completed provider earnings yet</Text>
+            <Text style={{ color: '#64748B', fontSize: 12 }}>{t('analytics.noProviders')}</Text>
           ) : (
             data.topProviders.map((prov, idx) => (
               <View key={idx} style={styles.providerRankRow}>
@@ -219,7 +205,7 @@ export default function AdminAnalyticsScreen() {
                   <Text style={styles.rankText}>#{idx + 1}</Text>
                 </View>
                 <Text style={styles.providerName}>{prov.name}</Text>
-                <Text style={styles.providerEarnings}>SAR {prov.earnings.toFixed(2)}</Text>
+                <Text style={styles.providerEarnings}>{t('common.sar', { amount: prov.earnings.toFixed(2) })}</Text>
               </View>
             ))
           )}

@@ -6,13 +6,14 @@ const crypto = require('crypto');
 const nowIso = () => new Date().toISOString();
 
 const DEFAULTS = {
-  users: () => ({ role: 'customer', status: 'active', approval_status: 'APPROVED', rating: 0, review_count: 0, completed_jobs: 0, service_categories: [] }),
+  users: () => ({ role: 'customer', status: 'active', approval_status: 'APPROVED', rating: 0, review_count: 0, completed_jobs: 0, service_categories: [], service_areas: [], is_available: true }),
   bookings: (db) => ({
     status: 'pending',
     payment_status: 'UNPAID',
     communication_status: 'LOCKED',
     payout_status: 'NONE',
     earnings_released: false,
+    photos: [],
     order_number: `BP-${db.nextSeq('booking_order_seq', 10001)}`,
   }),
   wallets: () => ({ available_balance: 0, pending_balance: 0, released_balance: 0 }),
@@ -40,7 +41,8 @@ const UNIQUE = {
   payment_proofs: [[['booking_id'], (r) => r.status === 'PENDING']],
   platform_settings: [[['key']]],
   commission_rules: [[['category']]],
-  user_push_tokens: [[['user_id']]],
+  user_push_tokens: [[['expo_push_token']]],
+  booking_dismissals: [[['booking_id', 'provider_id']]],
   chat_pinned: [[['user_id', 'booking_id']]],
 };
 
@@ -49,7 +51,9 @@ const CHECKS = {
     (r) => ['UNPAID', 'PAYMENT_SUBMITTED', 'PENDING_VERIFICATION', 'PAID', 'REJECTED', 'REFUNDED'].includes(r.payment_status) || 'bookings_payment_status_check',
     (r) => r.communication_status === 'LOCKED' || r.payment_status === 'PAID' || 'bookings_unlock_requires_payment',
     (r) => ['NONE', 'PENDING', 'PAID', 'CANCELLED'].includes(r.payout_status) || 'bookings_payout_status_check',
+    (r) => isNull(r.photos) || (Array.isArray(r.photos) && r.photos.length <= 4) || 'bookings_photos_check',
   ],
+  users: [(r) => isNull(r.payout_iban) || /^SA\d{22}$/.test(r.payout_iban) || 'users_payout_iban_check'],
   ledger_entries: [(r) => Number(r.amount) >= 0 || 'ledger_amount_check'],
   reviews: [(r) => (Number.isInteger(r.rating) && r.rating >= 1 && r.rating <= 5) || 'reviews_rating_check'],
 };
@@ -101,6 +105,9 @@ function splitTopLevel(expr) {
   return parts;
 }
 
+// PostgREST values may be double-quoted (e.g. city.eq."Al Khobar").
+const unquote = (v) => (v.length >= 2 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v);
+
 function parseOrCondition(part) {
   const firstDot = part.indexOf('.');
   const col = part.slice(0, firstDot);
@@ -110,7 +117,7 @@ function parseOrCondition(part) {
   const value = rest.slice(opDot + 1);
   switch (op) {
     case 'eq':
-      return (r) => !isNull(r[col]) && same(r[col], coerce(value));
+      return (r) => !isNull(r[col]) && same(r[col], coerce(unquote(value)));
     case 'neq':
       return (r) => !isNull(r[col]) && !same(r[col], coerce(value));
     case 'is':
@@ -118,6 +125,10 @@ function parseOrCondition(part) {
     case 'in': {
       const list = value.replace(/^\(|\)$/g, '').split(',');
       return (r) => !isNull(r[col]) && list.some((v) => same(r[col], v));
+    }
+    case 'cs': {
+      const wanted = value.replace(/^\{|\}$/g, '').split(',').map((v) => unquote(v.trim()));
+      return (r) => Array.isArray(r[col]) && wanted.every((v) => r[col].includes(v));
     }
     default:
       throw new Error(`fakeSupabase: unsupported or() operator ${op}`);

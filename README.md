@@ -80,11 +80,13 @@ Customer rates the provider (overall, quality, professionalism, punctuality, val
 
 ## 🧩 Features
 
-**Customers** — service requests, live proposal comparison, provider profiles, bank-transfer payment with copy buttons and receipt upload, communication lock/unlock, chat (text, photos, voice, location), voice calls, live provider tracking, completion confirmation, problem reports, category ratings, wallet for refunds.
+**Customers** — step-by-step request wizard (service → problem description & up to 4 photos → map pin → date & time → budget), live proposal comparison, provider profiles with category ratings, cancellation of open or unpaid requests, bank-transfer payment with copy buttons and receipt upload, communication lock/unlock, chat (text, photos, voice, location), voice calls, map-based live tracking with distance and arrival estimate, completion confirmation, problem reports, reviews, wallet for refunds with transfer to bank, notifications inbox and push notifications, profile editing, help assistant.
 
-**Providers** — request feed filtered by their services and city, proposals, waiting-for-payment state, trip/arrival/service controls, live location sharing that stops automatically, earnings dashboard (pending, paid out, commission), admin approval before receiving work.
+**Providers** — request feed filtered by services, home city + service areas, working days/hours and an online/paused switch; proposals (send, edit, withdraw) and "not interested"; request photos; waiting-for-payment state; trip/arrival/service controls with turn-by-turn navigation; live location sharing that stops automatically; earnings and payout history; payout bank account; admin approval before receiving work.
 
-**Admins** — payment verification with receipt preview (approve / reject with reason), provider payouts (mark as paid with bank reference), bank details & commission settings (global and per category), provider approval, disputes (release or refund), refunds, users, analytics and an audit log.
+**Admins** — payment verification with receipt preview (approve / reject with reason), provider payouts showing the provider's bank account (mark as paid with bank reference), disputes (release to provider or refund the customer), wallet transfer requests, bank details & commission settings (global and per category), provider approval, suspension and verification, reports, analytics and an audit log.
+
+The whole app is available in **English and Arabic** (right-to-left layout); `npm run check:i18n` keeps both languages complete.
 
 ---
 
@@ -92,9 +94,10 @@ Customer rates the provider (overall, quality, professionalism, punctuality, val
 
 | Layer | Technology |
 |---|---|
-| Mobile & web app | React Native 0.81, Expo SDK 54, Expo Router, Zustand, i18next (Arabic RTL / English) |
+| Mobile & web app | React Native 0.81, Expo SDK 54, Expo Router, Zustand, i18next (Arabic RTL / English), react-native-maps, expo-notifications |
 | API | Node.js 22, Express 5, Socket.IO 4, Helmet, express-rate-limit, Multer |
-| Database | Supabase PostgreSQL (row level security enabled, service-role access from the API) |
+| Database & files | Supabase PostgreSQL (row level security enabled, service-role access from the API); uploads on disk or in Supabase Storage |
+| Push | Expo push service (FCM on Android, APNs on iOS) |
 | Payments | Manual bank transfer with admin verification · optional Stripe PaymentSheet (server-verified + webhook) |
 | CI/CD | GitHub Actions: tests, schema validation on PostgreSQL 16, app typecheck/doctor/web build, Docker image to GHCR, optional deploy hook and EAS builds |
 
@@ -117,9 +120,12 @@ Home Services/
 │   └── Dockerfile
 └── home-services-app/
     ├── app/                  Screens: (auth) (customer) (provider) (admin)
+    ├── scripts/check-i18n.js Fails CI if a translation key is missing in English or Arabic
     └── src/
         ├── components/order/ PaymentPanel, CommunicationBar, ActiveOrderCard
-        ├── services/         API client, WebRTC calls
+        ├── components/map/   Location picker & live tracking map (native maps, OpenStreetMap on web)
+        ├── constants/        Service & city catalogue shared by every screen
+        ├── services/         API client, push notifications, WebRTC calls
         └── i18n/             English & Arabic translations
 ```
 
@@ -139,7 +145,7 @@ npm install
 ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' npm run seed   # create the admin account
 npm run dev                 # http://localhost:5000
 ```
-Then sign in as admin and open **Bank & Commission** to enter the platform bank details and commission rates. Customers cannot pay until bank details are configured.
+Then sign in as admin and open **Settings** (gear icon) to enter the platform bank details and commission rates. Customers cannot pay until bank details are configured.
 
 ### 3. App
 ```bash
@@ -148,7 +154,12 @@ cp .env.example .env        # EXPO_PUBLIC_API_URL=http://<your-computer-ip>:5000
 npm install
 npx expo start              # press a (Android), i (iOS) or w (web)
 ```
-Card payments, Google Sign-In and native calling need a development build (`eas build --profile development`); Expo Go and web fall back to bank transfer.
+Card payments, Google Sign-In, native calling and push notifications need a development build (`eas build --profile development`); Expo Go and web fall back to bank transfer, and the web build shows maps with OpenStreetMap.
+
+### 4. Push notifications & maps (production builds)
+- **Push:** run `eas init` (or set `EAS_PROJECT_ID`), then add your FCM (Android) and APNs (iOS) credentials to the EAS project with `eas credentials`. The API sends pushes through the Expo push service; nothing else to configure.
+- **Maps on Android:** create a Google Maps SDK for Android key and build with `GOOGLE_MAPS_API_KEY` set. iOS uses Apple Maps.
+- **Uploads without a disk:** set `STORAGE_DRIVER=supabase` on the API. Files go to the private `servehome-uploads` bucket (created by the schema) and are still served through the API's signed URLs.
 
 ---
 
@@ -166,9 +177,11 @@ Card payments, Google Sign-In and native calling need a development build (`eas 
 | `DEFAULT_COMMISSION_PERCENT` | | Used until an admin saves commission settings (default 10) |
 | `REQUIRE_PROVIDER_APPROVAL` | | `false` to auto-approve new providers |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CURRENCY` | | Optional card payments |
+| `STORAGE_DRIVER`, `SUPABASE_STORAGE_BUCKET` | | `local` (default, disk at `UPLOAD_DIR`) or `supabase` (Supabase Storage bucket) |
+| `PUSH_NOTIFICATIONS`, `EXPO_ACCESS_TOKEN` | | `false` disables mobile push; access token only if Expo enhanced push security is on |
 | `UPLOAD_DIR`, `TRUST_PROXY`, `PORT` | | Hosting details |
 
-**App** ([`home-services-app/.env.example`](home-services-app/.env.example)): `EXPO_PUBLIC_API_URL` (required for builds), `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` (optional).
+**App** ([`home-services-app/.env.example`](home-services-app/.env.example)): `EXPO_PUBLIC_API_URL` (required for builds), `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` (optional), `GOOGLE_MAPS_API_KEY` (Android maps in release builds), `EAS_PROJECT_ID` (push tokens).
 
 ---
 
@@ -187,8 +200,14 @@ The suite boots the real API and Socket.IO server against an in-memory PostgREST
 - reviews only after confirmation, once; category commission rules don't change historical orders
 - payment rejection and resubmission, refunds relocking communication, disputes blocking payouts
 - no admin self-signup, no password reset without a verified code, signed URLs for receipts
+- requests reach only available providers in the right city / service area and working hours; providers cannot assign themselves
+- customers cancel open or unpaid requests, never paid ones or ones being verified; providers hide requests and withdraw proposals
+- request photos (max 4, signed URLs, removable), profile editing with Saudi IBAN validation, provider bank details on admin payouts
+- order broadcasts never leak the exact address to providers who only viewed a request; live position on demand for the customer only
+- push notifications reach every device of a user and unregistered devices are removed; disputes are listed and resolved (release or refund)
+- uploads work with the local disk and with a Supabase Storage bucket
 
-CI additionally applies `supabase-schema.sql` twice to PostgreSQL 16 and runs [`test/sql/constraints.sql`](backend/test/sql/constraints.sql).
+CI additionally applies `supabase-schema.sql` twice to PostgreSQL 16 and runs [`test/sql/constraints.sql`](backend/test/sql/constraints.sql). For the app it runs `tsc`, the English/Arabic translation check, `expo-doctor` and a web export.
 
 ---
 
@@ -201,14 +220,15 @@ CI additionally applies `supabase-schema.sql` twice to PostgreSQL 16 and runs [`
 
 Repository settings to configure (environment **production**):
 - Secret `BACKEND_DEPLOY_HOOK_URL` — deploy webhook of your host (Render, Railway, Coolify, …) that pulls the new image.
-- Secret `EXPO_TOKEN` and variables `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` — for mobile builds (run `eas init` once locally to link the Expo project).
+- Secret `EXPO_TOKEN` and variables `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `EAS_PROJECT_ID` — for mobile builds (run `eas init` once locally to link the Expo project).
+- Secret `GOOGLE_MAPS_API_KEY` — Google Maps on Android builds.
 
-Run the backend container with the variables above and a persistent volume mounted at `/app/uploads`.
+Run the backend container with the variables above and either a persistent volume mounted at `/app/uploads` or `STORAGE_DRIVER=supabase`.
 
 ---
 
 ## 📌 Status & roadmap
 
-Implemented and tested: the payment → verification → communication-unlock → service → confirmation → commission → payout → review workflow described above.
+Implemented and tested: the payment → verification → communication-unlock → service → confirmation → commission → payout → review workflow, the request wizard with photos and map pin, map-based live tracking, push notifications, provider availability, service areas and working hours, customer cancellation, Arabic/RTL across every screen and Supabase Storage for uploads.
 
-Planned next: step-by-step request wizard with photos and map pin, map-based live tracking screen, push notifications (Expo/FCM), provider availability & service areas, full RTL review of every legacy screen, object storage (S3/Supabase Storage) for uploads.
+Possible next steps: server-side translation of notification and push texts (in-app notification titles are translated on the device), paying an order from the wallet balance, provider identity documents uploaded in the app (verification currently happens during admin approval).

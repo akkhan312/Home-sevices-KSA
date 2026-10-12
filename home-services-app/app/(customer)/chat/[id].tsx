@@ -10,6 +10,7 @@ import { useChatStore, ChatMessage } from '../../../src/store/chatStore';
 import { useSocket } from '../../../src/hooks/useSocket';
 import { API, API_HOST } from '../../../src/config/api';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import * as ImagePicker from 'expo-image-picker';
 import { getCurrentLocation, openMapUrl } from '../../../src/utils/location';
 import { getResponsiveContainerStyle } from '../../../src/theme/responsive';
@@ -20,6 +21,7 @@ import { ImageViewerModal } from '../../../src/components/chat/ImageViewerModal'
 import { ChatSkeleton } from '../../../src/components/chat/ChatSkeleton';
 import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { AudioCallModal, CallState } from '../../../src/components/chat/AudioCallModal';
+import { useFlipStyle } from '../../../src/utils/rtl';
 
 interface ProviderInfo {
   id: string;
@@ -35,6 +37,8 @@ export default function CustomerChatScreen() {
     id: string; providerName?: string; shareLocation?: string;
   }>();
 
+  const { t } = useTranslation();
+  const flip = useFlipStyle();
   const { user } = useAuthStore();
   const { connected, joinRoom, emitEvent, subscribe } = useSocket();
   const {
@@ -102,7 +106,7 @@ export default function CustomerChatScreen() {
 
             setProviderInfo({
               id: pData.id,
-              name: pData.name || booking.providerName || 'Provider',
+              name: pData.name || booking.providerName || t('common.provider'),
               profilePicture: pic,
               rating: pData.rating || 0,
               city: pData.city || '',
@@ -127,7 +131,7 @@ export default function CustomerChatScreen() {
         markRoomAsRead(bookingId as string);
         emitEvent('mark_read', { bookingId });
       } else if (res.status === 403) {
-        setLockMessage(data?.error || 'Communication is locked until the payment is verified.');
+        setLockMessage(data?.error || t('workflow.errors.locked'));
       }
     } catch {}
     setLoading(false);
@@ -195,7 +199,7 @@ export default function CustomerChatScreen() {
       if (data.bookingId === bookingId) {
         setCallState('idle');
         setShowCallModal(false);
-        Alert.alert('Call Declined', `${providerInfo?.name || 'Provider'} declined the call.`);
+        Alert.alert(t('calls.declined'), t('calls.declinedBody', { name: providerInfo?.name || t('common.provider') }));
       }
     });
 
@@ -222,7 +226,7 @@ export default function CustomerChatScreen() {
   // Voice Call Action Handlers
   const startAudioCall = () => {
     if (!connected) {
-      Alert.alert('Connection Offline', 'Cannot initiate call while offline.');
+      Alert.alert(t('calls.offlineTitle'), t('calls.offlineBody'));
       return;
     }
     setCallState('outgoing');
@@ -317,7 +321,7 @@ export default function CustomerChatScreen() {
         addOrUpdateMessage(bookingId as string, data);
       } else {
         markMessageFailed(bookingId as string, tempId);
-        if (res.status === 403) setLockMessage(data?.error || 'Communication is locked until the payment is verified.');
+        if (res.status === 403) setLockMessage(data?.error || t('workflow.errors.locked'));
       }
     } catch (e) {
       markMessageFailed(bookingId as string, tempId);
@@ -344,7 +348,7 @@ export default function CustomerChatScreen() {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Gallery permission is required.');
+        Alert.alert(t('wizard.details.permissionTitle'), t('wizard.details.permissionBody'));
         return;
       }
 
@@ -375,11 +379,11 @@ export default function CustomerChatScreen() {
           const data = await res.json();
           sendMessagePayload({ image: data.imageUrl, text: '📷 Photo' });
         } else {
-          Alert.alert('Upload Failed', 'Failed to upload image.');
+          Alert.alert(t('common.error'), t('chat.uploadFailed'));
         }
       }
     } catch {
-      Alert.alert('Error', 'An error occurred while uploading image.');
+      Alert.alert(t('common.error'), t('chat.uploadFailed'));
     } finally {
       setUploadingImage(false);
     }
@@ -401,7 +405,7 @@ export default function CustomerChatScreen() {
         }
       });
     } catch {
-      Alert.alert('Location Error', 'Unable to retrieve precise GPS location.');
+      Alert.alert(t('common.error'), t('chat.locationFailed'));
     } finally {
       setSendingLocation(false);
     }
@@ -462,7 +466,7 @@ export default function CustomerChatScreen() {
     );
   };
 
-  const displayName = providerInfo?.name || paramProviderName || 'Service Provider';
+  const displayName = providerInfo?.name || paramProviderName || t('common.provider');
   const isOnline = providerInfo?.id ? (onlineUsers.has(providerInfo.id) || connected) : connected;
 
   return (
@@ -473,7 +477,7 @@ export default function CustomerChatScreen() {
       <View style={styles.header}>
         <View style={[styles.headerContent, getResponsiveContainerStyle()]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color="#fff" style={flip} />
           </TouchableOpacity>
 
           <TouchableOpacity onPress={openProviderProfile} style={styles.headerInfo} activeOpacity={0.8}>
@@ -490,7 +494,7 @@ export default function CustomerChatScreen() {
               <View style={styles.statusRow}>
                 <View style={[styles.statusDot, isOnline ? styles.dotOnline : styles.dotOffline]} />
                 <Text style={styles.statusText}>
-                  {isOtherTyping ? 'typing...' : isOnline ? 'Online' : 'Offline'}
+                  {isOtherTyping ? t('chat.typing') : isOnline ? t('chat.online') : t('chat.offline')}
                 </Text>
                 {providerInfo?.rating ? (
                   <Text style={styles.ratingText}> · ⭐ {providerInfo.rating.toFixed(1)}</Text>
@@ -519,7 +523,7 @@ export default function CustomerChatScreen() {
             <Ionicons name="search" size={16} color="#94A3B8" />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search chat messages..."
+              placeholder={t('chat.searchMessages')}
               placeholderTextColor="#94A3B8"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -550,8 +554,8 @@ export default function CustomerChatScreen() {
               ListEmptyComponent={
                 <View style={styles.emptyChat}>
                   <Text style={styles.emptyChatIcon}>💬</Text>
-                  <Text style={styles.emptyChatText}>No messages yet</Text>
-                  <Text style={styles.emptyChatSub}>Start instant real-time conversation!</Text>
+                  <Text style={styles.emptyChatText}>{t('chat.noMessages')}</Text>
+                  <Text style={styles.emptyChatSub}>{t('chat.startConversation')}</Text>
                 </View>
               }
               showsVerticalScrollIndicator={false}
@@ -602,7 +606,7 @@ export default function CustomerChatScreen() {
               style={styles.input}
               value={text}
               onChangeText={handleTextChange}
-              placeholder="Type a message..."
+              placeholder={t('chat.typeMessage')}
               placeholderTextColor="#94A3B8"
               multiline
               maxLength={500}

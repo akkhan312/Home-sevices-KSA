@@ -492,6 +492,57 @@ CREATE TABLE IF NOT EXISTS payouts (
 CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payouts_provider ON payouts(provider_id, created_at DESC);
 
+-- ============================================================================
+-- PROVIDER PROFILE & AVAILABILITY, REQUEST PHOTOS, CANCELLATION, PUSH DEVICES
+-- ============================================================================
+
+-- ─── Providers: availability, service areas, working hours, payout account ──
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS service_areas         TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS is_available          BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS working_hours         JSONB,
+  ADD COLUMN IF NOT EXISTS payout_bank_name      TEXT,
+  ADD COLUMN IF NOT EXISTS payout_iban           TEXT,
+  ADD COLUMN IF NOT EXISTS payout_account_holder TEXT;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_payout_iban_check;
+ALTER TABLE users ADD CONSTRAINT users_payout_iban_check CHECK (payout_iban IS NULL OR payout_iban ~ '^SA[0-9]{22}$');
+
+-- ─── Requests: problem photos and customer cancellation ─────────────────────
+ALTER TABLE bookings
+  ADD COLUMN IF NOT EXISTS photos              JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS cancelled_at        TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS cancelled_by        UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_photos_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_photos_check
+  CHECK (photos IS NULL OR (jsonb_typeof(photos) = 'array' AND jsonb_array_length(photos) <= 4));
+
+-- ─── Requests a provider chose to hide ("not interested") ───────────────────
+CREATE TABLE IF NOT EXISTS booking_dismissals (
+  booking_id  UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  provider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (booking_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_booking_dismissals_provider ON booking_dismissals(provider_id);
+
+-- ─── Push devices: a user may sign in on several devices; a device token belongs to one user at a time ──
+ALTER TABLE user_push_tokens DROP CONSTRAINT IF EXISTS user_push_tokens_user_id_key;
+DELETE FROM user_push_tokens a USING user_push_tokens b
+WHERE a.expo_push_token = b.expo_push_token
+  AND (COALESCE(a.updated_at, 'epoch'::timestamptz), a.id) < (COALESCE(b.updated_at, 'epoch'::timestamptz), b.id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_push_tokens_token ON user_push_tokens(expo_push_token);
+CREATE INDEX IF NOT EXISTS idx_user_push_tokens_user ON user_push_tokens(user_id);
+
+-- ─── Object storage (STORAGE_DRIVER=supabase): private bucket for all uploads ──
+-- Skipped on plain PostgreSQL (CI), where the Supabase "storage" schema does not exist.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'storage') THEN
+    INSERT INTO storage.buckets (id, name, public) VALUES ('servehome-uploads', 'servehome-uploads', false) ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
 -- ─── ROW LEVEL SECURITY ─────────────────────────────────────────────────────
 -- The API server uses the service-role key, which bypasses RLS. Enabling RLS with
 -- no policies ensures the public "anon" key can never read tables directly
@@ -503,7 +554,7 @@ BEGIN
     'users', 'bookings', 'messages', 'booking_offers', 'reviews', 'notifications', 'favorites',
     'payments', 'wallets', 'wallet_transactions', 'withdrawals', 'call_history', 'payment_logs',
     'admin_activity_logs', 'reports', 'booking_status_history', 'chat_pinned', 'user_push_tokens',
-    'platform_settings', 'commission_rules', 'payment_proofs', 'ledger_entries', 'payouts'
+    'platform_settings', 'commission_rules', 'payment_proofs', 'ledger_entries', 'payouts', 'booking_dismissals'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;

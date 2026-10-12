@@ -57,5 +57,38 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
 
+  -- Provider payout accounts must be Saudi IBANs.
+  BEGIN
+    UPDATE users SET payout_iban = 'DE89370400440532013000' WHERE id = '00000000-0000-0000-0000-0000000000d1';
+    RAISE EXCEPTION 'ASSERTION FAILED: non-Saudi IBAN accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE users SET payout_iban = 'SA0380000000608010167519' WHERE id = '00000000-0000-0000-0000-0000000000d1';
+
+  -- At most four request photos.
+  BEGIN
+    UPDATE bookings SET photos = '["private/1.jpg","private/2.jpg","private/3.jpg","private/4.jpg","private/5.jpg"]'::jsonb
+    WHERE id = '00000000-0000-0000-0000-0000000000b1';
+    RAISE EXCEPTION 'ASSERTION FAILED: fifth request photo accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- A device push token belongs to one user; a user may have several devices.
+  INSERT INTO user_push_tokens (user_id, expo_push_token) VALUES ('00000000-0000-0000-0000-0000000000c1', 'ExponentPushToken[ci-device-1]');
+  INSERT INTO user_push_tokens (user_id, expo_push_token) VALUES ('00000000-0000-0000-0000-0000000000c1', 'ExponentPushToken[ci-device-2]');
+  BEGIN
+    INSERT INTO user_push_tokens (user_id, expo_push_token) VALUES ('00000000-0000-0000-0000-0000000000d1', 'ExponentPushToken[ci-device-1]');
+    RAISE EXCEPTION 'ASSERTION FAILED: duplicate push token accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
+  -- A provider hides a request only once.
+  INSERT INTO booking_dismissals (booking_id, provider_id) VALUES ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000d1');
+  BEGIN
+    INSERT INTO booking_dismissals (booking_id, provider_id) VALUES ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000d1');
+    RAISE EXCEPTION 'ASSERTION FAILED: duplicate dismissal accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
   RAISE NOTICE 'All database constraint assertions passed';
 END $$;

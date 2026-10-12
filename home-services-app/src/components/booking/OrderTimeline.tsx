@@ -32,6 +32,9 @@ interface OrderTimelineProps {
   role?: 'customer' | 'provider';
   createdAt?: string;
   paidAt?: string;
+  tripStartedAt?: string;
+  arrivedAt?: string;
+  serviceStartedAt?: string;
   completedAt?: string;
   confirmedAt?: string;
   releasedAt?: string;
@@ -39,7 +42,7 @@ interface OrderTimelineProps {
 
 const fmt = (ts?: string) => (ts ? new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : undefined);
 
-export const OrderTimeline: React.FC<OrderTimelineProps> = ({ stage = 'REQUESTED', role = 'customer', createdAt, paidAt, completedAt, confirmedAt, releasedAt }) => {
+export const OrderTimeline: React.FC<OrderTimelineProps> = ({ stage = 'REQUESTED', role = 'customer', createdAt, paidAt, tripStartedAt, arrivedAt, serviceStartedAt, completedAt, confirmedAt, releasedAt }) => {
   const { t } = useTranslation();
   const current = rank(stage);
   const closed = stage === 'CANCELLED' || stage === 'DISPUTED';
@@ -49,11 +52,11 @@ export const OrderTimeline: React.FC<OrderTimelineProps> = ({ stage = 'REQUESTED
     { key: 'proposals', at: rank('PROPOSALS_RECEIVED'), title: t('workflow.timeline.proposals'), icon: 'people-outline' },
     { key: 'selected', at: rank('PAYMENT_PENDING'), title: t('workflow.timeline.selected'), icon: 'person-add-outline' },
     { key: 'payment', at: rank('COMMUNICATION_UNLOCKED'), title: t('workflow.timeline.payment'), icon: 'shield-checkmark-outline', time: fmt(paidAt) },
-    { key: 'onTheWay', at: rank('PROVIDER_ON_THE_WAY'), title: t('workflow.timeline.onTheWay'), icon: 'car-outline' },
-    { key: 'arrived', at: rank('ARRIVED'), title: t('workflow.timeline.arrived'), icon: 'location-outline' },
-    { key: 'started', at: rank('SERVICE_STARTED'), title: t('workflow.timeline.started'), icon: 'construct-outline' },
+    { key: 'onTheWay', at: rank('PROVIDER_ON_THE_WAY'), title: t('workflow.timeline.onTheWay'), icon: 'car-outline', time: fmt(tripStartedAt) },
+    { key: 'arrived', at: rank('ARRIVED'), title: t('workflow.timeline.arrived'), icon: 'location-outline', time: fmt(arrivedAt) },
+    { key: 'started', at: rank('SERVICE_STARTED'), title: t('workflow.timeline.started'), icon: 'construct-outline', time: fmt(serviceStartedAt) },
     { key: 'completed', at: rank('SERVICE_COMPLETED'), title: t('workflow.timeline.completed'), icon: 'flag-outline', time: fmt(completedAt) },
-    { key: 'confirmed', at: rank('PAYOUT_PENDING'), title: t('workflow.timeline.confirmed'), icon: 'ribbon-outline', time: fmt(confirmedAt) },
+    { key: 'confirmed', at: rank('PAYOUT_PENDING'), title: t(role === 'provider' ? 'workflow.timeline.customerConfirmed' : 'workflow.timeline.confirmed'), icon: 'ribbon-outline', time: fmt(confirmedAt) },
   ];
   if (role === 'provider') {
     steps.push({ key: 'paidOut', at: rank('COMPLETED'), title: t('workflow.timeline.paidOut'), icon: 'wallet-outline', time: fmt(releasedAt) });

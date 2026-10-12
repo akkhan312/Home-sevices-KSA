@@ -81,6 +81,8 @@ jobs:
       - run: npm ci
       - name: TypeScript
         run: npx tsc --noEmit
+      - name: Translations (English / Arabic)
+        run: npm run check:i18n
       - name: Expo doctor
         run: npx expo-doctor
       - name: Web export

@@ -13,12 +13,16 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useTranslation } from 'react-i18next';
+import { BackButton } from '../../src/components/ui/BackButton';
+import { serviceName } from '../../src/constants/catalog';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../../src/config/api';
 import { useChatStore, Conversation } from '../../src/store/chatStore';
 import { useAuthStore } from '../../src/store/authStore';
 
 export default function ConversationsScreen() {
+  const { t, i18n } = useTranslation();
   const { user } = useAuthStore();
   const { conversations, setConversations, onlineUsers, togglePinConversation } = useChatStore();
   const [loading, setLoading] = useState(true);
@@ -51,7 +55,9 @@ export default function ConversationsScreen() {
     }
   };
 
+  // Requests still collecting proposals have nobody to message yet.
   const filteredConversations = conversations.filter((c) => {
+    if (!c.otherUser.id) return false;
     const query = search.toLowerCase().trim();
     if (!query) return true;
     return (
@@ -84,10 +90,8 @@ export default function ConversationsScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={20} color="#0F172A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Messages</Text>
+        <BackButton />
+        <Text style={styles.headerTitle}>{t('chat.messages')}</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -97,7 +101,7 @@ export default function ConversationsScreen() {
           <Ionicons name="search-outline" size={18} color="#94A3B8" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search conversations, names or messages..."
+            placeholder={t('chat.searchConversations')}
             placeholderTextColor="#94A3B8"
             value={search}
             onChangeText={setSearch}
@@ -144,18 +148,18 @@ export default function ConversationsScreen() {
                     </Text>
                     <Text style={styles.timeText}>
                       {item.updatedAt
-                        ? new Date(item.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        ? new Date(item.updatedAt).toLocaleTimeString(i18n.language === 'ar' ? 'ar-SA' : 'en-GB', { hour: '2-digit', minute: '2-digit' })
                         : ''}
                     </Text>
                   </View>
 
                   <Text style={styles.serviceText} numberOfLines={1}>
-                    {item.categoryName}
+                    {serviceName(t, item.category, item.categoryName)}{item.communication?.chat === false ? ` · 🔒 ${t('workflow.lock.title')}` : ''}
                   </Text>
 
                   <View style={styles.bottomRow}>
                     <Text style={styles.lastMsgText} numberOfLines={1}>
-                      {item.lastMessage?.text || (item.lastMessage?.image ? '📷 Photo' : 'No messages yet')}
+                      {item.lastMessage?.text || (item.lastMessage?.image ? `📷 ${t('chat.photo')}` : item.lastMessage?.location ? `📍 ${t('chat.sharedLocation')}` : t('chat.noMessages'))}
                     </Text>
 
                     {item.unreadCount > 0 && (
@@ -180,8 +184,8 @@ export default function ConversationsScreen() {
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons name="chatbubbles-outline" size={54} color="#94A3B8" />
-              <Text style={styles.emptyTitle}>No Conversations</Text>
-              <Text style={styles.emptySub}>Your active booking chats will appear here.</Text>
+              <Text style={styles.emptyTitle}>{t('chat.noConversations')}</Text>
+              <Text style={styles.emptySub}>{t('chat.noConversationsSub')}</Text>
             </View>
           }
         />

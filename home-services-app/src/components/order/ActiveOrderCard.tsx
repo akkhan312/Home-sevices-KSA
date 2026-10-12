@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next';
 import { LinearGradient } from 'expo-linear-gradient';
 import { webrtcManager } from '../../services/webrtcService';
 import { Colors } from '../../theme';
+import { serviceName } from '../../constants/catalog';
+import { useFlipStyle } from '../../utils/rtl';
 
 const INACTIVE_STAGES = ['COMPLETED', 'PROVIDER_PAID', 'CANCELLED'];
 
@@ -17,6 +19,7 @@ export function pickActiveOrder(orders: any[]) {
 /** Highly visible card for the customer's current order with lock-aware Chat / Call / Track actions. */
 export function ActiveOrderCard({ order }: { order: any }) {
   const { t } = useTranslation();
+  const flip = useFlipStyle();
   const c = order.communication || {};
   const needsPayment = ['PAYMENT_PENDING'].includes(order.stage) && ['UNPAID', 'REJECTED'].includes(order.paymentStatus);
   const open = () => router.push({ pathname: '/(customer)/booking/[id]', params: { id: order._id } });
@@ -30,7 +33,13 @@ export function ActiveOrderCard({ order }: { order: any }) {
       enabled: Boolean(c.call),
       onPress: () => webrtcManager.startCall({ bookingId: order._id, callerName: order.customerName || 'Customer', targetUserId: order.providerId, serviceName: order.categoryName }),
     },
-    { key: 'track', icon: 'navigate', label: t('workflow.lock.track'), enabled: Boolean(c.liveLocation), onPress: open },
+    {
+      key: 'track',
+      icon: 'navigate',
+      label: t('workflow.lock.track'),
+      enabled: Boolean(c.liveLocation),
+      onPress: () => router.push({ pathname: '/(customer)/booking/[id]/track', params: { id: order._id } }),
+    },
   ];
 
   return (
@@ -38,7 +47,7 @@ export function ActiveOrderCard({ order }: { order: any }) {
       <LinearGradient colors={['#1E3A5F', '#12253D']} style={styles.card}>
         <View style={styles.top}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.service}>{order.categoryName}</Text>
+            <Text style={styles.service}>{serviceName(t, order.category, order.categoryName)}</Text>
             {order.providerName ? (
               <Text style={styles.provider}>
                 {order.providerName} <Ionicons name="checkmark-circle" size={13} color="#60A5FA" />
@@ -55,8 +64,8 @@ export function ActiveOrderCard({ order }: { order: any }) {
         {needsPayment ? (
           <View style={styles.payRow}>
             <Ionicons name="card" size={18} color="#FDE68A" />
-            <Text style={styles.payText}>{t('workflow.payment.required')} · SAR {order.price}</Text>
-            <Ionicons name="chevron-forward" size={18} color="#FDE68A" />
+            <Text style={styles.payText}>{t('workflow.payment.required')} · {t('common.sar', { amount: order.price })}</Text>
+            <Ionicons name="chevron-forward" size={18} color="#FDE68A" style={flip} />
           </View>
         ) : order.providerId ? (
           <View style={styles.actions}>

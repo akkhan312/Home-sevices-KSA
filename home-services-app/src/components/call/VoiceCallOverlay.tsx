@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, SafeAreaView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { webrtcManager, CallSession } from '../../services/webrtcService';
 
 export const VoiceCallOverlay: React.FC = () => {
+  const { t } = useTranslation();
   const [session, setSession] = useState<CallSession | null>(null);
 
   useEffect(() => {
@@ -25,14 +27,14 @@ export const VoiceCallOverlay: React.FC = () => {
   const isConnected = session.status === 'connected';
   const isOutgoing = session.status === 'outgoing';
 
-  let statusText = 'Connecting...';
-  if (isIncoming) statusText = 'Incoming Voice Call...';
-  else if (isOutgoing) statusText = 'Calling customer / provider...';
-  else if (isConnected) statusText = `In Call • ${formatTimer(session.duration)}`;
-  else if (session.status === 'busy') statusText = 'User is busy in another call';
-  else if (session.status === 'rejected') statusText = 'Call Declined';
-  else if (session.status === 'timeout') statusText = 'No Answer (Call Timed Out)';
-  else if (session.status === 'ended') statusText = 'Call Ended';
+  let statusText = t('calls.connecting');
+  if (isIncoming) statusText = t('calls.incoming');
+  else if (isOutgoing) statusText = t('calls.calling');
+  else if (isConnected) statusText = t('calls.inCall', { time: formatTimer(session.duration) });
+  else if (session.status === 'busy') statusText = t('calls.busy');
+  else if (session.status === 'rejected') statusText = t('calls.declined');
+  else if (session.status === 'timeout') statusText = t('calls.noAnswer');
+  else if (session.status === 'ended') statusText = t('calls.ended');
 
   return (
     <Modal visible={true} animationType="slide" transparent={false}>
@@ -42,14 +44,14 @@ export const VoiceCallOverlay: React.FC = () => {
           {isConnected && (
             <View style={styles.qualityBadge}>
               <View style={styles.greenDot} />
-              <Text style={styles.qualityText}>HD Audio • Signal Excellent</Text>
+              <Text style={styles.qualityText}>{t('calls.connected')}</Text>
             </View>
           )}
 
           {/* Service Banner */}
           <View style={styles.servicePill}>
             <Ionicons name="construct-outline" size={14} color="#60A5FA" />
-            <Text style={styles.servicePillText}>{session.serviceName || 'Home Service'}</Text>
+            <Text style={styles.servicePillText}>{session.serviceName || t('calls.homeService')}</Text>
           </View>
 
           {/* Caller Photo Avatar */}
@@ -76,7 +78,7 @@ export const VoiceCallOverlay: React.FC = () => {
                   onPress={() => webrtcManager.rejectCall()}
                 >
                   <Ionicons name="close" size={32} color="#FFFFFF" />
-                  <Text style={styles.btnLabel}>Decline</Text>
+                  <Text style={styles.btnLabel}>{t('calls.decline')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -84,7 +86,7 @@ export const VoiceCallOverlay: React.FC = () => {
                   onPress={() => webrtcManager.acceptCall()}
                 >
                   <Ionicons name="call" size={28} color="#FFFFFF" />
-                  <Text style={styles.btnLabel}>Accept</Text>
+                  <Text style={styles.btnLabel}>{t('calls.accept')}</Text>
                 </TouchableOpacity>
               </>
             ) : isConnected || isOutgoing ? (
@@ -94,7 +96,7 @@ export const VoiceCallOverlay: React.FC = () => {
                   onPress={() => webrtcManager.toggleMute()}
                 >
                   <Ionicons name={session.isMuted ? 'mic-off' : 'mic'} size={24} color="#FFFFFF" />
-                  <Text style={styles.btnLabel}>{session.isMuted ? 'Unmute' : 'Mute'}</Text>
+                  <Text style={styles.btnLabel}>{session.isMuted ? t('calls.unmute') : t('calls.mute')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -102,7 +104,7 @@ export const VoiceCallOverlay: React.FC = () => {
                   onPress={() => webrtcManager.endCall('user_ended')}
                 >
                   <Ionicons name="call" size={30} color="#FFFFFF" style={{ transform: [{ rotate: '135deg' }] }} />
-                  <Text style={styles.btnLabel}>End Call</Text>
+                  <Text style={styles.btnLabel}>{t('calls.end')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -110,7 +112,7 @@ export const VoiceCallOverlay: React.FC = () => {
                   onPress={() => webrtcManager.toggleSpeaker()}
                 >
                   <Ionicons name={session.isSpeakerOn ? 'volume-high' : 'volume-medium'} size={24} color="#FFFFFF" />
-                  <Text style={styles.btnLabel}>{session.isSpeakerOn ? 'Speaker On' : 'Speaker'}</Text>
+                  <Text style={styles.btnLabel}>{session.isSpeakerOn ? t('calls.speakerOn') : t('calls.speaker')}</Text>
                 </TouchableOpacity>
               </>
             ) : null}

@@ -4,6 +4,7 @@ import { useAuthStore } from '../src/store/authStore';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { StripeWrapper } from '../src/components/StripeWrapper';
 import { VoiceCallOverlay } from '../src/components/call/VoiceCallOverlay';
+import { PushNotificationsBridge } from '../src/components/PushNotificationsBridge';
 import '../src/i18n'; // initialize i18n
 
 export default function RootLayout() {
@@ -27,6 +28,7 @@ export default function RootLayout() {
         <Stack.Screen name="(admin)" />
       </Stack>
       <VoiceCallOverlay />
+      <PushNotificationsBridge />
     </StripeWrapper>
   );
 }

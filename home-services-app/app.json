@@ -54,7 +54,26 @@
         }
       ],
       "@react-native-google-signin/google-signin",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ServeHome uses your photos so you can show providers the problem and send payment receipts.",
+          "cameraPermission": "ServeHome uses the camera so you can photograph the problem for providers."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "ServeHome uses the microphone for voice messages and calls with your provider or customer."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2E8B57"
+        }
+      ]
     ]
   }
 }

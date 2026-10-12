@@ -5,37 +5,40 @@ import {
 } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { useSettingsStore } from '../../store/settingsStore';
 
 // ── Tab config ────────────────────────────────────────────────────────────────
-// Maps route name → [inactive icon, active icon, label]
+// Maps route name → [inactive icon, active icon, label key under `tabs`]
 const TAB_CONFIG: Record<string, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap, string]> = {
   // Customer tabs (4 icons)
-  index:           ['home-outline',             'home',             'Home'],
-  'booking/index': ['receipt-outline',          'receipt',          'Bookings'],
-  booking:         ['receipt-outline',          'receipt',          'Bookings'],
-  'ai-chat':       ['sparkles-outline',         'sparkles',         'AI Assistant'],
-  'chat/index':    ['chatbubble-ellipses-outline', 'chatbubble-ellipses', 'Chat'],
-  profile:         ['person-outline',           'person',           'Profile'],
+  index:           ['home-outline',             'home',             'home'],
+  'booking/index': ['receipt-outline',          'receipt',          'bookings'],
+  booking:         ['receipt-outline',          'receipt',          'bookings'],
+  'ai-chat':       ['sparkles-outline',         'sparkles',         'assistant'],
+  profile:         ['person-outline',           'person',           'profile'],
   // Provider tabs (4 icons)
-  earnings:      ['cash-outline',         'cash',             'Earnings'],
-  notifications: ['notifications-outline','notifications',    'Alerts'],
-  // Shared / hidden in bar
-  wallet:    ['wallet-outline',           'wallet',           'Wallet'],
+  earnings:      ['cash-outline',         'cash',             'earnings'],
+  notifications: ['notifications-outline','notifications',    'alerts'],
 };
 
 // Customer tabs: Home, Bookings, AI Assistant, Profile
 const VISIBLE_CUSTOMER = new Set(['index', 'booking/index', 'booking', 'ai-chat', 'profile']);
-const VISIBLE_PROVIDER  = new Set(['index', 'earnings', 'ai-chat', 'profile']);
+// Provider tabs: Home, Earnings, Alerts, Profile
+const VISIBLE_PROVIDER  = new Set(['index', 'earnings', 'notifications', 'profile']);
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+  const { t } = useTranslation();
   const { language, setLanguage } = useSettingsStore();
   const [showLang, setShowLang] = useState(false);
 
   // Detect provider vs customer by checking if "earnings" is in the route list
   const isProvider = state.routes.some((r: any) => r.name === 'earnings');
   const VISIBLE = isProvider ? VISIBLE_PROVIDER : VISIBLE_CUSTOMER;
+
+  // Detail screens (an order, the request wizard, chat, tracking) use the full height without the tab bar.
+  if (!VISIBLE.has(state.routes[state.index]?.name)) return null;
 
   const visibleRoutes = state.routes.filter((r: any) => VISIBLE.has(r.name));
 
@@ -51,7 +54,7 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
         <Pressable style={styles.overlay} onPress={() => setShowLang(false)}>
           <Pressable style={styles.langSheet}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Language · اللغة</Text>
+            <Text style={styles.sheetTitle}>{t('language.title')}</Text>
             {(['en', 'ar'] as const).map((code) => {
               const active = language === code;
               return (
@@ -116,8 +119,8 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
               </View>
 
               {/* Label */}
-              <Text style={[styles.label, isFocused && styles.labelActive]}>
-                {label}
+              <Text style={[styles.label, isFocused && styles.labelActive]} numberOfLines={1}>
+                {t(`tabs.${label}`)}
               </Text>
             </TouchableOpacity>
           );

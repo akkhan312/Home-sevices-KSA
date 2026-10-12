@@ -1,70 +1,61 @@
 import React, { memo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { Colors, Typography, Spacing, Radius, Shadows } from '../../theme';
 import { Badge } from './Badge';
 import { StarRating } from './StarRating';
+import { cityLabel, serviceName } from '../../constants/catalog';
+import { toAbsoluteUrl } from '../../config/api';
+import { useFlipStyle } from '../../utils/rtl';
 
-export interface ProviderCardProps {
+/** Public provider record from GET /api/providers. */
+export interface PublicProvider {
   id: string;
   name: string;
-  profilePicture?: string;
+  profile_picture?: string | null;
   rating?: number;
-  reviewCount?: number;
-  city?: string;
-  distanceKm?: number;
-  isVerified?: boolean;
-  price?: number;
+  review_count?: number;
+  completed_jobs?: number;
+  city?: string | null;
+  service_areas?: string[];
+  service_categories?: string[];
+  service_prices?: Record<string, number>;
+  is_available?: boolean;
+  verified?: boolean;
+}
+
+interface Props {
+  provider: PublicProvider;
+  /** Service the customer is browsing; its price is shown when the provider set one. */
   category?: string;
   isFavorited?: boolean;
-  phone?: string;
   onPressCard?: () => void;
   onPressBook?: () => void;
-  onPressChat?: () => void;
   onPressFavorite?: () => void;
 }
 
-function ProviderCardComponent({
-  name,
-  profilePicture,
-  rating = 4.9,
-  reviewCount = 18,
-  city = 'Riyadh',
-  distanceKm,
-  isVerified = true,
-  price = 120,
-  category,
-  isFavorited = false,
-  phone,
-  onPressCard,
-  onPressBook,
-  onPressChat,
-  onPressFavorite,
-}: ProviderCardProps) {
-
-  const handleCall = () => {
-    if (phone) {
-      Linking.openURL(`tel:${phone}`);
-    }
-  };
+function ProviderCardComponent({ provider, category, isFavorited, onPressCard, onPressBook, onPressFavorite }: Props) {
+  const { t } = useTranslation();
+  const flip = useFlipStyle();
+  const categories = provider.service_categories || [];
+  const prices = provider.service_prices || {};
+  const priceFor = category && prices[category] ? prices[category] : Math.min(...categories.map((c) => prices[c]).filter((p) => p > 0));
+  const reviews = Number(provider.review_count || 0);
+  const picture = toAbsoluteUrl(provider.profile_picture);
 
   return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={onPressCard}
-      activeOpacity={0.88}
-    >
-      {/* Header Banner & Avatar Row */}
+    <TouchableOpacity style={styles.card} onPress={onPressCard} activeOpacity={0.88}>
       <View style={styles.topRow}>
-        <View style={styles.avatarWrapper}>
-          {profilePicture ? (
-            <Image source={{ uri: profilePicture }} style={styles.avatarImg} />
+        <View>
+          {picture ? (
+            <Image source={{ uri: picture }} style={styles.avatarImg} />
           ) : (
             <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>{(name || 'P').charAt(0)}</Text>
+              <Text style={styles.avatarText}>{(provider.name || 'P').charAt(0)}</Text>
             </View>
           )}
-          {isVerified && (
+          {provider.verified && (
             <View style={styles.verifiedIconBadge}>
               <Ionicons name="checkmark" size={10} color="#fff" />
             </View>
@@ -73,64 +64,52 @@ function ProviderCardComponent({
 
         <View style={styles.headerInfo}>
           <View style={styles.nameRow}>
-            <Text style={styles.nameText} numberOfLines={1}>{name}</Text>
-            {isVerified && <Badge variant="verified" label="VERIFIED" size="sm" />}
+            <Text style={styles.nameText} numberOfLines={1}>{provider.name}</Text>
+            {provider.verified && <Badge variant="verified" label={t('provider.verified')} size="sm" />}
           </View>
-
-          {category && <Text style={styles.categoryText}>{category}</Text>}
-
+          {categories.length > 0 && (
+            <Text style={styles.categoryText} numberOfLines={1}>{categories.map((c) => serviceName(t, c)).join(' · ')}</Text>
+          )}
           <View style={styles.locationRow}>
             <Ionicons name="location-outline" size={13} color={Colors.textMuted} />
-            <Text style={styles.locationText}>{city}</Text>
-            {distanceKm !== undefined && (
-              <Text style={styles.distBadge}> · 📍 {distanceKm} km away</Text>
-            )}
+            <Text style={styles.locationText} numberOfLines={1}>{cityLabel(t, provider.city) || '—'}</Text>
+            {provider.is_available === false && <Text style={styles.paused}> · {t('availability.paused')}</Text>}
           </View>
         </View>
 
-        {/* Favorite Heart Button */}
-        <TouchableOpacity style={styles.favoriteBtn} onPress={onPressFavorite}>
-          <Ionicons
-            name={isFavorited ? 'heart' : 'heart-outline'}
-            size={20}
-            color={isFavorited ? '#EF4444' : Colors.textMuted}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Rating & Pricing Row */}
-      <View style={styles.statsRow}>
-        <View style={styles.ratingBox}>
-          <StarRating rating={rating} size={14} />
-          <Text style={styles.ratingVal}>{rating.toFixed(1)}</Text>
-          <Text style={styles.reviewCount}>({reviewCount} reviews)</Text>
-        </View>
-
-        <View style={styles.priceBox}>
-          <Text style={styles.priceLabel}>From</Text>
-          <Text style={styles.priceVal}>SAR {price}</Text>
-        </View>
-      </View>
-
-      {/* Action Buttons Row */}
-      <View style={styles.actionsRow}>
-        {phone ? (
-          <TouchableOpacity style={styles.iconActionBtn} onPress={handleCall}>
-            <Ionicons name="call-outline" size={16} color={Colors.primary} />
-          </TouchableOpacity>
-        ) : null}
-
-        {onPressChat && (
-          <TouchableOpacity style={styles.iconActionBtn} onPress={onPressChat}>
-            <Ionicons name="chatbubble-outline" size={16} color={Colors.accent} />
+        {onPressFavorite && (
+          <TouchableOpacity style={styles.favoriteBtn} onPress={onPressFavorite} accessibilityLabel={t('profile.savedProviders')}>
+            <Ionicons name={isFavorited ? 'heart' : 'heart-outline'} size={20} color={isFavorited ? '#EF4444' : Colors.textMuted} />
           </TouchableOpacity>
         )}
-
-        <TouchableOpacity style={styles.bookBtn} onPress={onPressBook || onPressCard}>
-          <Text style={styles.bookBtnText}>Book Service</Text>
-          <Ionicons name="arrow-forward" size={14} color="#fff" />
-        </TouchableOpacity>
       </View>
+
+      <View style={styles.statsRow}>
+        <View style={styles.ratingBox}>
+          {reviews > 0 ? (
+            <>
+              <StarRating rating={Number(provider.rating || 0)} size={14} />
+              <Text style={styles.ratingVal}>{Number(provider.rating || 0).toFixed(1)}</Text>
+              <Text style={styles.reviewCount}>({t('providerProfile.reviews', { count: reviews })})</Text>
+            </>
+          ) : (
+            <Badge variant="newProvider" label={t('provider.newProvider')} size="sm" />
+          )}
+        </View>
+        {Number.isFinite(priceFor) && (
+          <View style={styles.priceBox}>
+            <Text style={styles.priceLabel}>{t('providerCard.from')}</Text>
+            <Text style={styles.priceVal}>{t('common.sar', { amount: priceFor })}</Text>
+          </View>
+        )}
+      </View>
+
+      {onPressBook && (
+        <TouchableOpacity style={styles.bookBtn} onPress={onPressBook}>
+          <Text style={styles.bookBtnText}>{t('workflow.requestService')}</Text>
+          <Ionicons name="arrow-forward" size={14} color="#fff" style={flip} />
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 }
@@ -138,55 +117,27 @@ function ProviderCardComponent({
 export const ProviderCard = memo(ProviderCardComponent);
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.xxl,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-    ...Shadows.md,
-  },
+  card: { backgroundColor: Colors.surface, borderRadius: Radius.xxl, padding: Spacing.md, marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.borderLight, ...Shadows.md },
   topRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  avatarWrapper: { position: 'relative' },
   avatarImg: { width: 56, height: 56, borderRadius: 28 },
-  avatarPlaceholder: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.primary,
-    justifyContent: 'center', alignItems: 'center'
-  },
+  avatarPlaceholder: { width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#fff', fontSize: Typography.xl, fontWeight: Typography.bold },
-  verifiedIconBadge: {
-    position: 'absolute', bottom: 0, right: 0, width: 18, height: 18, borderRadius: 9,
-    backgroundColor: Colors.accent, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff'
-  },
+  verifiedIconBadge: { position: 'absolute', bottom: 0, right: 0, width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.accent, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
   headerInfo: { flex: 1, justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  nameText: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.textPrimary, flexShrink: 1 },
-  categoryText: { fontSize: Typography.xs, color: Colors.textSecondary, marginTop: 2, textTransform: 'capitalize' },
+  nameText: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.textPrimary, flexShrink: 1, textAlign: 'left' },
+  categoryText: { fontSize: Typography.xs, color: Colors.textSecondary, marginTop: 2, textAlign: 'left' },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 4 },
   locationText: { fontSize: Typography.xs, color: Colors.textMuted },
-  distBadge: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.accent },
+  paused: { fontSize: Typography.xs, color: Colors.warning, fontWeight: Typography.bold },
   favoriteBtn: { padding: Spacing.xs },
-
-  statsRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: Colors.borderLight
-  },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: Colors.borderLight },
   ratingBox: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingVal: { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.textPrimary },
   reviewCount: { fontSize: Typography.xs, color: Colors.textMuted },
   priceBox: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
   priceLabel: { fontSize: Typography.xs, color: Colors.textMuted },
   priceVal: { fontSize: Typography.lg, fontWeight: Typography.black, color: Colors.primary },
-
-  actionsRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md },
-  iconActionBtn: {
-    width: 38, height: 38, borderRadius: Radius.lg, backgroundColor: Colors.background,
-    borderWidth: 1, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center'
-  },
-  bookBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    height: 38, borderRadius: Radius.lg, backgroundColor: Colors.primary
-  },
-  bookBtnText: { color: '#fff', fontSize: Typography.sm, fontWeight: Typography.bold }
+  bookBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 40, borderRadius: Radius.lg, backgroundColor: Colors.primary, marginTop: Spacing.md },
+  bookBtnText: { color: '#fff', fontSize: Typography.sm, fontWeight: Typography.bold },
 });

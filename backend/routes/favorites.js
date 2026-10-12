@@ -56,10 +56,13 @@ router.get('/', authenticate, async (req, res) => {
       (favorites || []).map(async (f) => {
         const { data: provider } = await supabase
           .from('users')
-          .select('id, name, profile_picture, rating, review_count, city, service_categories')
+          .select('id, name, profile_picture, rating, review_count, completed_jobs, city, service_areas, service_categories, service_prices, is_available, iqama_number, approval_status')
           .eq('id', f.provider_id)
-          .single();
-        return { ...f, provider: provider || null };
+          .maybeSingle();
+        if (!provider) return { ...f, provider: null };
+        // Same public shape as GET /api/providers (verification is derived, the Iqama number never leaves the server).
+        const { iqama_number, approval_status, ...publicFields } = provider;
+        return { ...f, provider: { ...publicFields, verified: Boolean(iqama_number) && (approval_status || 'APPROVED') === 'APPROVED' } };
       })
     );
 

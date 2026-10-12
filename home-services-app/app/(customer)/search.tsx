@@ -1,253 +1,128 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, StatusBar, FlatList, ActivityIndicator, Image,
-} from 'react-native';
-import { router } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, StatusBar, FlatList, ActivityIndicator, ScrollView } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
-import { API } from '../../src/config/api';
-import { Colors, Typography, Spacing, Radius, Shadows } from '../../src/theme';
-import { Badge } from '../../src/components/ui/Badge';
-import { StarRating } from '../../src/components/ui/StarRating';
+import { apiFetch } from '../../src/services/apiClient';
+import { useAuthStore } from '../../src/store/authStore';
+import { Colors, Typography, Spacing, Radius } from '../../src/theme';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { getCurrentLocation, calculateDistance, DEFAULT_COORDS } from '../../src/utils/location';
+import { BackButton } from '../../src/components/ui/BackButton';
+import { CityPicker } from '../../src/components/ui/CityPicker';
+import { ProviderCard, PublicProvider } from '../../src/components/ui/ProviderCard';
+import { SERVICES, cityLabel, getService, serviceName } from '../../src/constants/catalog';
 import { getResponsiveContainerStyle } from '../../src/theme/responsive';
-
-const SAUDI_CITIES = ['Riyadh', 'Jeddah', 'Mecca', 'Medina', 'Dammam', 'Al Khobar'];
 
 export default function SearchScreen() {
   const { t } = useTranslation();
+  const { category: initialCategory } = useLocalSearchParams<{ category?: string }>();
+  const { user } = useAuthStore();
   const [query, setQuery] = useState('');
-  const [selectedCity, setSelectedCity] = useState('');
+  const [category, setCategory] = useState(getService(initialCategory)?.id || '');
+  const [city, setCity] = useState(user?.city || '');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [providers, setProviders] = useState<any[]>([]);
+  const [showCities, setShowCities] = useState(false);
+  const [providers, setProviders] = useState<PublicProvider[]>([]);
   const [loading, setLoading] = useState(false);
-  const [userLocation, setUserLocation] = useState<{ coords: { latitude: number; longitude: number }; placeName?: string }>({
-    coords: DEFAULT_COORDS,
-    placeName: 'Riyadh, SA'
-  });
-
-  const fetchUserLocation = async () => {
-    const loc = await getCurrentLocation();
-    setUserLocation(loc);
-  };
-
-  const fetchProviders = async () => {
-    setLoading(true);
-    try {
-      let url = `${API}/providers?`;
-      if (selectedCity) url += `city=${encodeURIComponent(selectedCity)}&`;
-      if (verifiedOnly) url += `verifiedOnly=true&`;
-
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setProviders(data);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    fetchUserLocation();
-    fetchProviders();
-  }, [selectedCity, verifiedOnly]);
+    const params = new URLSearchParams();
+    if (city) params.set('city', city);
+    if (category) params.set('category', category);
+    if (verifiedOnly) params.set('verifiedOnly', 'true');
+    setLoading(true);
+    apiFetch<PublicProvider[]>(`/providers?${params.toString()}`)
+      .then(setProviders)
+      .catch(() => setProviders([]))
+      .finally(() => setLoading(false));
+  }, [city, category, verifiedOnly]);
 
-  const filteredProviders = providers.filter((p) => {
-    if (!query) return true;
-    const q = query.toLowerCase();
-    return (
-      (p.name && p.name.toLowerCase().includes(q)) ||
-      (p.service_categories && p.service_categories.some((c: string) => c.toLowerCase().includes(q))) ||
-      (p.city && p.city.toLowerCase().includes(q))
-    );
-  }).map((p) => {
-    // Determine provider coords or city-based approx coords
-    const pLat = p.latitude || 24.7136;
-    const pLng = p.longitude || 46.6753;
-    const dist = calculateDistance(
-      userLocation.coords.latitude,
-      userLocation.coords.longitude,
-      pLat,
-      pLng
-    );
-    return { ...p, distanceKm: dist };
-  }).sort((a, b) => a.distanceKm - b.distanceKm);
+  // Free-text search over names and (translated) service names.
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return providers;
+    return providers.filter((p) => p.name?.toLowerCase().includes(q) || (p.service_categories || []).some((c) => c.includes(q) || serviceName(t, c).toLowerCase().includes(q)));
+  }, [providers, query, t]);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
-
-      {/* Search Header */}
       <View style={styles.header}>
         <View style={getResponsiveContainerStyle()}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
+          <View style={styles.titleRow}>
+            <BackButton />
             <Text style={styles.title}>{t('search.title')}</Text>
-            <TouchableOpacity onPress={fetchUserLocation} style={styles.locBadge}>
-              <Ionicons name="location" size={12} color={Colors.accent} />
-              <Text style={styles.locBadgeText}>{userLocation.placeName || 'Current Location'}</Text>
-            </TouchableOpacity>
           </View>
-
           <View style={styles.searchBar}>
-            <Ionicons name="search-outline" size={20} color={Colors.textMuted} style={{ marginRight: 8 }} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder={t('search.placeholder')}
-              value={query}
-              onChangeText={setQuery}
-              placeholderTextColor={Colors.textMuted}
-            />
+            <Ionicons name="search-outline" size={20} color={Colors.textMuted} />
+            <TextInput style={styles.searchInput} placeholder={t('search.placeholder')} value={query} onChangeText={setQuery} placeholderTextColor={Colors.textMuted} />
             {query.length > 0 && (
-              <TouchableOpacity onPress={() => setQuery('')}>
+              <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel={t('search.clearFilters')}>
                 <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
             )}
           </View>
-
-          {/* Filter chips */}
-          <View style={styles.filterRow}>
-            <TouchableOpacity
-              style={[styles.chip, verifiedOnly && styles.chipActive]}
-              onPress={() => setVerifiedOnly(!verifiedOnly)}
-            >
-              <Ionicons name="shield-checkmark" size={14} color={verifiedOnly ? '#fff' : Colors.accent} />
-              <Text style={[styles.chipText, verifiedOnly && styles.chipTextActive]}>
-                {t('search.verifiedOnly')}
-              </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            <TouchableOpacity style={[styles.chip, !!city && styles.chipActive]} onPress={() => setShowCities(true)}>
+              <Ionicons name="location" size={14} color={city ? '#fff' : Colors.accent} />
+              <Text style={[styles.chipText, !!city && styles.chipTextActive]}>{city ? cityLabel(t, city) : t('search.allCities')}</Text>
             </TouchableOpacity>
-
-            {SAUDI_CITIES.map((c) => (
-              <TouchableOpacity
-                key={c}
-                style={[styles.chip, selectedCity === c && styles.chipActive]}
-                onPress={() => setSelectedCity(selectedCity === c ? '' : c)}
-              >
-                <Text style={[styles.chipText, selectedCity === c && styles.chipTextActive]}>
-                  {c}
-                </Text>
+            <TouchableOpacity style={[styles.chip, verifiedOnly && styles.chipActive]} onPress={() => setVerifiedOnly(!verifiedOnly)}>
+              <Ionicons name="shield-checkmark" size={14} color={verifiedOnly ? '#fff' : Colors.accent} />
+              <Text style={[styles.chipText, verifiedOnly && styles.chipTextActive]}>{t('search.verifiedOnly')}</Text>
+            </TouchableOpacity>
+            {SERVICES.map((s) => (
+              <TouchableOpacity key={s.id} style={[styles.chip, category === s.id && styles.chipActive]} onPress={() => setCategory(category === s.id ? '' : s.id)}>
+                <Ionicons name={s.icon} size={14} color={category === s.id ? '#fff' : s.color} />
+                <Text style={[styles.chipText, category === s.id && styles.chipTextActive]}>{t(`categories.${s.id}`)}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
         </View>
       </View>
 
-      {/* Results */}
       <View style={[{ flex: 1 }, getResponsiveContainerStyle()]}>
         {loading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={Colors.accent} />
           </View>
-        ) : filteredProviders.length === 0 ? (
-          <EmptyState
-            type="no-results"
-            title={t('search.noResults')}
-            description={t('search.noResultsDesc')}
-          />
+        ) : results.length === 0 ? (
+          <EmptyState type="no-results" title={t('search.noResults')} description={t('search.noResultsDesc')} />
         ) : (
           <FlatList
-            data={filteredProviders}
+            data={results}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
+            ListHeaderComponent={<Text style={styles.count}>{t('search.results', { count: results.length })}</Text>}
             renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.providerCard}
-                onPress={() => router.push({ pathname: '/(customer)/provider/[id]', params: { id: item.id } })}
-                activeOpacity={0.85}
-              >
-                <View style={styles.avatarBox}>
-                  {item.profile_picture ? (
-                    <Image source={{ uri: item.profile_picture }} style={styles.avatar} />
-                  ) : (
-                    <View style={styles.avatarPlaceholder}>
-                      <Text style={styles.avatarText}>{(item.name || 'P').charAt(0)}</Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.cardInfo}>
-                  <View style={styles.cardHeader}>
-                    <Text style={styles.providerName}>{item.name}</Text>
-                    {item.verified && <Badge variant="verified" label={t('provider.verified')} />}
-                  </View>
-
-                  <View style={styles.ratingRow}>
-                    <StarRating rating={item.rating || 4.8} size={14} />
-                    <Text style={styles.ratingText}>
-                      {(item.rating || 4.8).toFixed(1)} ({item.review_count || 12})
-                    </Text>
-                    <Text style={styles.dot}>•</Text>
-                    <Text style={styles.cityText}>{item.city || 'Saudi Arabia'}</Text>
-                    <Text style={styles.dot}>•</Text>
-                    <Text style={styles.distText}>📍 {item.distanceKm} km</Text>
-                  </View>
-
-                  {item.service_categories && item.service_categories.length > 0 && (
-                    <View style={styles.categoriesRow}>
-                      {item.service_categories.slice(0, 3).map((cat: string) => (
-                        <View key={cat} style={styles.catBadge}>
-                          <Text style={styles.catBadgeText}>{cat}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
+              <ProviderCard
+                provider={item}
+                category={category || undefined}
+                onPressCard={() => router.push({ pathname: '/(customer)/provider/[id]', params: { id: item.id } })}
+                onPressBook={() => router.push({ pathname: '/(customer)/booking/create', params: { category: category || item.service_categories?.[0] || '' } })}
+              />
             )}
           />
         )}
       </View>
+      <CityPicker visible={showCities} selected={city ? [city] : []} onChange={(v) => setCity(v[0] || '')} onClose={() => setShowCities(false)} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { padding: Spacing.lg, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
+  header: { padding: Spacing.lg, paddingBottom: Spacing.md, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: Spacing.md },
   title: { fontSize: Typography.heading, fontWeight: Typography.black, color: Colors.textPrimary },
-  locBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.accent + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full },
-  locBadgeText: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.accent },
-  searchBar: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.background,
-    borderRadius: Radius.lg, paddingHorizontal: 12, paddingVertical: 10,
-    borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md,
-  },
-  searchInput: { flex: 1, fontSize: Typography.base, color: Colors.textPrimary },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full,
-    backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border,
-  },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.background, borderRadius: Radius.lg, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md },
+  searchInput: { flex: 1, fontSize: Typography.base, color: Colors.textPrimary, textAlign: 'left' },
+  filterRow: { gap: 6 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radius.full, backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border },
   chipActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
   chipText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textSecondary },
   chipTextActive: { color: '#fff' },
   loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  list: { padding: Spacing.lg, gap: Spacing.md },
-  providerCard: {
-    flexDirection: 'row', backgroundColor: Colors.surface, borderRadius: Radius.xl,
-    padding: Spacing.md, borderWidth: 1, borderColor: Colors.borderLight, ...Shadows.sm,
-  },
-  avatarBox: { marginRight: Spacing.md },
-  avatar: { width: 60, height: 60, borderRadius: 30 },
-  avatarPlaceholder: {
-    width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.primary,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  avatarText: { color: '#fff', fontSize: Typography.xl, fontWeight: Typography.bold },
-  cardInfo: { flex: 1, justifyContent: 'center' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  providerName: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.textPrimary },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  ratingText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textSecondary },
-  dot: { color: Colors.textMuted },
-  cityText: { fontSize: Typography.xs, color: Colors.textMuted },
-  distText: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.accent },
-  categoriesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 },
-  catBadge: { backgroundColor: Colors.borderLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radius.sm },
-  catBadgeText: { fontSize: Typography.xs, color: Colors.textSecondary, textTransform: 'capitalize' },
+  list: { padding: Spacing.lg, paddingBottom: 40 },
+  count: { fontSize: 13, color: Colors.textSecondary, fontWeight: '700', marginBottom: 10, textAlign: 'left' },
 });

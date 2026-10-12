@@ -34,6 +34,10 @@ function mapUserToFrontend(u) {
     profilePicture = `${host}${profilePicture}`;
   }
 
+  const approvalStatus = u.approval_status || 'APPROVED';
+  const isProvider = u.role === 'provider';
+
+  // Only ever returned to the account owner (login, signup, /api/users/me).
   return {
     uid: u.id,
     _id: u.id,
@@ -46,10 +50,20 @@ function mapUserToFrontend(u) {
     googleId: u.google_id || '',
     city: u.city || '',
     serviceCategories: u.service_categories || [],
+    serviceAreas: u.service_areas || [],
+    servicePrices: u.service_prices || {},
     bio: u.bio || '',
     rating: Number(u.rating || 0),
+    reviewCount: Number(u.review_count || 0),
+    experienceYears: Number(u.experience_years || 0),
     status: u.status || 'active',
-    approvalStatus: u.approval_status || 'APPROVED',
+    approvalStatus,
+    verified: isProvider && Boolean(u.iqama_number) && approvalStatus === 'APPROVED',
+    isAvailable: u.is_available !== false,
+    workingHours: u.working_hours || null,
+    payoutBank: isProvider
+      ? { bankName: u.payout_bank_name || '', iban: u.payout_iban || '', accountHolder: u.payout_account_holder || '' }
+      : null,
     completedJobs: Number(u.completed_jobs || 0),
     createdAt: u.created_at,
     updatedAt: u.updated_at
@@ -111,6 +125,17 @@ function mapBookingToFrontend(b) {
     description: b.description || b.notes || '',
     latitude: b.latitude ?? null,
     longitude: b.longitude ?? null,
+    photos: (Array.isArray(b.photos) ? b.photos : [])
+      .filter((p) => typeof p === 'string' && p)
+      .map((p) => ({ name: p.split('/').pop(), url: fileUrl(p) })),
+    revisionNotes: b.revision_notes || null,
+    cancelledAt: b.cancelled_at || null,
+    cancellationReason: b.cancellation_reason || null,
+    cancelledBy: b.cancelled_by || null,
+    paidAt: b.paid_at || null,
+    tripStartedAt: b.trip_started_at || null,
+    arrivedAt: b.arrived_at || null,
+    serviceStartedAt: b.service_started_at || null,
     paymentSlip: paymentSlip,
     earningsReleased: b.earnings_released !== undefined ? b.earnings_released : false,
     releasedAt: b.released_at || null,

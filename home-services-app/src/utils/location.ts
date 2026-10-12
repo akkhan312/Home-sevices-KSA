@@ -1,5 +1,7 @@
 import * as Location from 'expo-location';
 import { Linking, Platform, Alert } from 'react-native';
+import i18n from '../i18n';
+import { matchCity } from '../constants/catalog';
 
 export interface LocationCoords {
   latitude: number;
@@ -14,6 +16,8 @@ export interface LocationResult {
   accuracy: number;
   timestamp: string;
   isFallback?: boolean;
+  /** Direction of travel in degrees (live tracking only). */
+  heading?: number | null;
 }
 
 // Default fallback coordinates: Riyadh, Saudi Arabia
@@ -34,10 +38,7 @@ export async function requestLocationPermissions(): Promise<boolean> {
 
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
-        'GPS Permission Required',
-        'Please enable Precise Location access in device settings to share your exact location.'
-      );
+      Alert.alert(i18n.t('location.permissionTitle'), i18n.t('location.permissionBody'));
       return false;
     }
     return true;
@@ -265,6 +266,7 @@ export async function startLiveLocationTracking(
           accuracy: Math.round(accuracy),
           timestamp: new Date(position.timestamp).toISOString(),
           isFallback: false,
+          heading: position.coords.heading ?? null,
         });
       }
     );
@@ -280,6 +282,29 @@ export function stopLiveLocationTracking() {
   if (locationSubscription) {
     locationSubscription.remove();
     locationSubscription = null;
+  }
+}
+
+export interface PlaceDetails {
+  city: string | null;
+  area: string | null;
+  street: string | null;
+}
+
+/** City (one of ServeHome's cities when recognised), district and street for a point. Native only. */
+export async function reverseGeocode(coords: LocationCoords): Promise<PlaceDetails> {
+  const empty = { city: null, area: null, street: null };
+  if (Platform.OS === 'web') return empty;
+  try {
+    const [p] = await Location.reverseGeocodeAsync({ latitude: coords.latitude, longitude: coords.longitude });
+    if (!p) return empty;
+    return {
+      city: matchCity(p.city, p.subregion, p.region) || p.city || null,
+      area: p.district || p.subregion || null,
+      street: [p.streetNumber, p.street || p.name].filter(Boolean).join(' ') || null,
+    };
+  } catch {
+    return empty;
   }
 }
 

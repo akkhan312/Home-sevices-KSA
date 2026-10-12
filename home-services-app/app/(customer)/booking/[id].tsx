@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Alert, ActivityIndicator, Linking, RefreshControl } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Alert, ActivityIndicator, RefreshControl, Image } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -14,7 +14,13 @@ import { FeedbackModal, ReviewPayload } from '../../../src/components/booking/Fe
 import { PaymentPanel } from '../../../src/components/order/PaymentPanel';
 import { CommunicationBar } from '../../../src/components/order/CommunicationBar';
 import { PromptModal } from '../../../src/components/ui/PromptModal';
-import { apiFetch } from '../../../src/services/apiClient';
+import { BackButton } from '../../../src/components/ui/BackButton';
+import { ImageViewerModal } from '../../../src/components/chat/ImageViewerModal';
+import * as ImagePicker from 'expo-image-picker';
+import { apiFetch, appendFile } from '../../../src/services/apiClient';
+import { serviceName, cityLabel } from '../../../src/constants/catalog';
+import { Colors } from '../../../src/theme';
+import { useFlipStyle } from '../../../src/utils/rtl';
 
 const OPEN_STAGES = ['REQUESTED', 'PROPOSALS_RECEIVED'];
 const AWAITING_PAYMENT_STAGES = ['PAYMENT_PENDING', 'PAYMENT_VERIFICATION'];
@@ -22,6 +28,7 @@ const AWAITING_PAYMENT_STAGES = ['PAYMENT_PENDING', 'PAYMENT_VERIFICATION'];
 export default function OrderTracking() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t } = useTranslation();
+  const flip = useFlipStyle();
   const [booking, setBooking] = useState<any | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,8 +37,9 @@ export default function OrderTracking() {
   const [cardBusy, setCardBusy] = useState(false);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [prompt, setPrompt] = useState<null | 'report' | 'revision'>(null);
-  const providerLocation = useRef<{ latitude: number; longitude: number } | null>(null);
+  const [prompt, setPrompt] = useState<null | 'report' | 'revision' | 'cancel'>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const { subscribe, joinRoom } = useSocket();
   const { initPaymentSheet, presentPaymentSheet, isAvailable: cardPaymentsAvailable } = usePayment();
@@ -76,6 +84,11 @@ export default function OrderTracking() {
         if (!matches(offer)) return;
         setOffers((prev) => [offer, ...prev.filter((o) => o.providerId !== offer.providerId)]);
       }),
+      subscribe('proposal:withdrawn', (data: any) => {
+        if (!matches(data)) return;
+        setOffers((prev) => prev.filter((o) => o.providerId !== data.providerId));
+        fetchBooking();
+      }),
       subscribe('order:updated', (updated: any) => {
         if (matches(updated)) fetchBooking();
       }),
@@ -86,12 +99,6 @@ export default function OrderTracking() {
         Alert.alert(`✓ ${t('workflow.payment.confirmedTitle')}`, t('workflow.payment.unlockedBody'));
       }),
       subscribe('payment:rejected', (data: any) => matches(data) && fetchBooking()),
-      subscribe('location:update', (data: any) => {
-        if (matches(data)) providerLocation.current = { latitude: data.latitude, longitude: data.longitude };
-      }),
-      subscribe('location:stopped', (data: any) => {
-        if (matches(data)) providerLocation.current = null;
-      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, [id, joinRoom, subscribe, fetchBooking, t]);
@@ -116,7 +123,7 @@ export default function OrderTracking() {
 
   const handleSubmitFeedback = async (review: ReviewPayload) => {
     await apiFetch(`/bookings/${id}/reviews`, { method: 'POST', body: review });
-    Alert.alert('⭐', t('reviews.reviewSubmitted', { defaultValue: 'Review submitted' }));
+    Alert.alert('⭐', t('reviews.reviewSubmitted'));
   };
 
   const handleConfirmCompletion = async () => {
@@ -138,8 +145,38 @@ export default function OrderTracking() {
         setBooking(data.booking);
       } else if (prompt === 'revision') {
         setBooking(await apiFetch(`/bookings/${id}/status`, { method: 'PATCH', body: { status: 'REVISION_REQUESTED', revisionNotes: text } }));
+      } else if (prompt === 'cancel') {
+        setBooking(await apiFetch(`/bookings/${id}/cancel`, { method: 'POST', body: { reason: text || undefined } }));
       }
       setPrompt(null);
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err.message);
+    }
+  };
+
+  const addPhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(t('wizard.details.permissionTitle'), t('wizard.details.permissionBody'));
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6 });
+    if (result.canceled || !result.assets[0]) return;
+    setPhotoBusy(true);
+    try {
+      const form = new FormData();
+      await appendFile(form, 'image', result.assets[0]);
+      setBooking(await apiFetch(`/bookings/${id}/photos`, { method: 'POST', form, timeoutMs: 60000 }));
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = async (name: string) => {
+    try {
+      setBooking(await apiFetch(`/bookings/${id}/photos/${encodeURIComponent(name)}`, { method: 'DELETE' }));
     } catch (err: any) {
       Alert.alert(t('common.error'), err.message);
     }
@@ -165,19 +202,10 @@ export default function OrderTracking() {
     }
   };
 
-  const openTracking = () => {
-    const loc = providerLocation.current;
-    if (!loc) {
-      Alert.alert(t('workflow.lock.track'), t('workflow.stages.PROVIDER_ON_THE_WAY'));
-      return;
-    }
-    Linking.openURL(`https://maps.google.com/?q=${loc.latitude},${loc.longitude}`);
-  };
-
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color="#2E8B57" />
+        <ActivityIndicator size="large" color={Colors.accent} />
       </SafeAreaView>
     );
   }
@@ -187,8 +215,8 @@ export default function OrderTracking() {
       <SafeAreaView style={[styles.container, styles.center]}>
         <Ionicons name="cloud-offline-outline" size={40} color="#94A3B8" />
         <Text style={styles.errorText}>{loadError || t('errors.notFound')}</Text>
-        <TouchableOpacity onPress={fetchBooking} style={styles.backBtnText}>
-          <Text style={{ color: '#2E8B57', fontWeight: 'bold' }}>{t('common.retry')}</Text>
+        <TouchableOpacity onPress={fetchBooking} style={styles.retryBtn}>
+          <Text style={{ color: Colors.accent, fontWeight: 'bold' }}>{t('common.retry')}</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
@@ -199,26 +227,38 @@ export default function OrderTracking() {
   const awaitingPayment = AWAITING_PAYMENT_STAGES.includes(stage) && booking.paymentStatus !== 'PAID';
   const awaitingConfirmation = stage === 'SERVICE_COMPLETED';
   const isConfirmed = ['PAYOUT_PENDING', 'PROVIDER_PAID', 'COMPLETED'].includes(stage);
+  const canCancel = (isOpen || stage === 'PAYMENT_PENDING') && ['UNPAID', 'REJECTED'].includes(booking.paymentStatus);
   const showCardPay = cardPaymentsAvailable && !!STRIPE_PUBLISHABLE_KEY && booking.paymentStatus !== 'PENDING_VERIFICATION';
+  const title = serviceName(t, booking.category, booking.categoryName);
+  const badgeDanger = stage === 'DISPUTED' || stage === 'CANCELLED';
+  const photos: { name: string; url: string }[] = booking.photos || [];
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t('common.back')}>
-          <Ionicons name="arrow-back" size={22} color="#0F172A" />
-        </TouchableOpacity>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{booking.categoryName}</Text>
-          {!!booking.orderNumber && <Text style={{ color: '#64748B', fontSize: 12, fontWeight: '700' }}>#{booking.orderNumber}</Text>}
+        <BackButton />
+        <View style={{ flex: 1, marginHorizontal: 12 }}>
+          <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+          {!!booking.orderNumber && <Text style={styles.orderNumber}>#{booking.orderNumber}</Text>}
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: stage === 'DISPUTED' || stage === 'CANCELLED' ? '#FEE2E2' : '#ECFDF5' }]}>
-          <Text style={[styles.statusBadgeText, { color: stage === 'DISPUTED' || stage === 'CANCELLED' ? '#B91C1C' : '#047857' }]}>
+        <View style={[styles.statusBadge, { backgroundColor: badgeDanger ? '#FEE2E2' : '#ECFDF5' }]}>
+          <Text style={[styles.statusBadgeText, { color: badgeDanger ? '#B91C1C' : '#047857' }]}>
             {t(`workflow.stages.${stage}`, { defaultValue: stage })}
           </Text>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
+        {stage === 'CANCELLED' && (
+          <View style={[styles.infoCard, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
+            <Ionicons name="close-circle" size={28} color="#B91C1C" />
+            <View style={{ flex: 1, marginStart: 12 }}>
+              <Text style={[styles.cardTitle, { color: '#991B1B' }]}>{booking.paymentStatus === 'REFUNDED' ? t('order.refundedTitle') : t('order.cancelledTitle')}</Text>
+              <Text style={styles.cardDesc}>{booking.paymentStatus === 'REFUNDED' ? t('order.refundedBody') : booking.cancellationReason || t('order.cancelledBody')}</Text>
+            </View>
+          </View>
+        )}
+
         {/* 1. Proposals */}
         {isOpen && (
           <View>
@@ -228,14 +268,14 @@ export default function OrderTracking() {
                 <Text style={styles.biddingHeaderSub}>{offers.length ? t('workflow.proposals.compare') : t('workflow.proposals.waitingSub')}</Text>
               </View>
               <View style={styles.budgetBadgeWrap}>
-                <Text style={styles.budgetLabel}>SAR</Text>
+                <Text style={styles.budgetLabel}>{t('common.sarSymbol')}</Text>
                 <Text style={styles.budgetValue}>{booking.budget || booking.price}</Text>
               </View>
             </View>
 
             <TouchableOpacity style={styles.increaseBudgetBtn} onPress={() => setShowBudgetModal(true)}>
               <Ionicons name="sparkles-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.increaseBudgetBtnText}>{t('bidding.increaseBudget', { defaultValue: 'Increase budget' })}</Text>
+              <Text style={styles.increaseBudgetBtnText}>{t('bidding.increaseBudget')}</Text>
             </TouchableOpacity>
 
             <CustomerOffersList
@@ -249,17 +289,16 @@ export default function OrderTracking() {
 
         {/* 2. Selected provider summary */}
         {!!booking.providerId && (
-          <View style={styles.providerCard}>
+          <TouchableOpacity style={styles.providerCard} onPress={() => router.push(`/(customer)/provider/${booking.providerId}`)}>
             <View style={styles.providerAvatar}>
               <Ionicons name="person" size={22} color="#64748B" />
             </View>
-            <TouchableOpacity style={styles.providerInfo} onPress={() => router.push(`/(customer)/provider/${booking.providerId}`)}>
+            <View style={styles.providerInfo}>
               <Text style={styles.providerName}>{booking.providerName}</Text>
-              <Text style={styles.providerRating}>
-                SAR {booking.price} · {booking.scheduledDate}{booking.scheduledTime ? ` ${booking.scheduledTime}` : ''}
-              </Text>
-            </TouchableOpacity>
-          </View>
+              <Text style={styles.providerMeta}>{t('order.agreedPrice', { price: booking.price })}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} style={flip} />
+          </TouchableOpacity>
         )}
 
         {/* 3. Payment */}
@@ -268,14 +307,14 @@ export default function OrderTracking() {
         )}
 
         {/* 4. Communication (locked until payment is verified) */}
-        {!!booking.providerId && !['CANCELLED'].includes(stage) && (
+        {!!booking.providerId && stage !== 'CANCELLED' && (
           <CommunicationBar
             role="customer"
             communication={booking.communication}
             onChat={() => router.push(`/(customer)/chat/${id}`)}
             onCall={() => webrtcManager.startCall({ bookingId: String(id), callerName: booking.customerName || 'Customer', targetUserId: booking.providerId, serviceName: booking.categoryName })}
             onLocation={() => router.push({ pathname: '/(customer)/chat/[id]', params: { id: String(id), shareLocation: '1' } })}
-            onTrack={openTracking}
+            onTrack={() => router.push({ pathname: '/(customer)/booking/[id]/track', params: { id: String(id) } })}
           />
         )}
 
@@ -286,17 +325,17 @@ export default function OrderTracking() {
             <Text style={styles.confirmationCardTitle}>{t('workflow.completion.title')}</Text>
             <View style={[styles.confirmationActionsRow, { marginTop: 14 }]}>
               <TouchableOpacity style={[styles.actionBtn, styles.confirmBtn]} onPress={handleConfirmCompletion}>
-                <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.confirmBtnText}>{t('workflow.completion.confirm')}</Text>
+                <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" style={{ marginEnd: 6 }} />
+                <Text style={styles.actionBtnText}>{t('workflow.completion.confirm')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.actionBtn, styles.reportBtn]} onPress={() => setPrompt('report')}>
-                <Ionicons name="alert-circle" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.reportBtnText}>{t('workflow.completion.report')}</Text>
+                <Ionicons name="alert-circle" size={20} color="#FFFFFF" style={{ marginEnd: 6 }} />
+                <Text style={styles.actionBtnText}>{t('workflow.completion.report')}</Text>
               </TouchableOpacity>
             </View>
             <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#F59E0B', marginTop: 10, width: '100%' }]} onPress={() => setPrompt('revision')}>
-              <Ionicons name="refresh-circle" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.confirmBtnText}>{t('workflow.completion.revision')}</Text>
+              <Ionicons name="refresh-circle" size={20} color="#FFFFFF" style={{ marginEnd: 6 }} />
+              <Text style={styles.actionBtnText}>{t('workflow.completion.revision')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -304,10 +343,10 @@ export default function OrderTracking() {
         {isConfirmed && (
           <View style={styles.successConfirmedCard}>
             <Ionicons name="checkmark-done-circle" size={28} color="#10B981" />
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={{ color: '#065F46', fontWeight: '800', fontSize: 14 }}>{t(`workflow.stages.${stage}`)}</Text>
+            <View style={{ flex: 1, marginStart: 10 }}>
+              <Text style={{ color: '#065F46', fontWeight: '800', fontSize: 14, textAlign: 'left' }}>{t(`workflow.stages.${stage}`)}</Text>
               <TouchableOpacity onPress={() => setShowFeedbackModal(true)}>
-                <Text style={{ color: '#047857', fontSize: 13, marginTop: 4, fontWeight: '800' }}>⭐ {t('workflow.completion.rate')}</Text>
+                <Text style={{ color: '#047857', fontSize: 13, marginTop: 4, fontWeight: '800', textAlign: 'left' }}>⭐ {t('workflow.completion.rate')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -316,18 +355,59 @@ export default function OrderTracking() {
         {stage === 'DISPUTED' && (
           <View style={[styles.infoCard, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
             <Ionicons name="shield-half-outline" size={30} color="#B91C1C" />
-            <Text style={[styles.cardDesc, { marginLeft: 12, flex: 1 }]}>{t('workflow.stages.DISPUTED')}</Text>
+            <Text style={[styles.cardDesc, { marginStart: 12, flex: 1 }]}>{t('order.disputedBody')}</Text>
           </View>
         )}
+
+        {/* 6. What was requested */}
+        <View style={styles.detailsCard}>
+          <Text style={styles.sectionTitle}>{t('order.details')}</Text>
+          <DetailRow icon="construct-outline" text={booking.serviceOption || title} />
+          <DetailRow icon="calendar-outline" text={`${booking.scheduledDate}${booking.scheduledTime ? ` · ${booking.scheduledTime}` : ''}`} />
+          <DetailRow icon="location-outline" text={[booking.address, booking.city && !String(booking.address).includes(booking.city) ? cityLabel(t, booking.city) : null].filter(Boolean).join(', ')} />
+          {!!booking.description && <Text style={styles.description}>{booking.description}</Text>}
+          {(photos.length > 0 || canCancel) && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
+              {photos.map((p) => (
+                <TouchableOpacity key={p.name} onPress={() => setViewing(p.url)}>
+                  <Image source={{ uri: p.url }} style={styles.photo} />
+                  {canCancel && (
+                    <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(p.name)} accessibilityLabel={t('common.delete')}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              ))}
+              {/* Photos can be added or removed until the order is paid. */}
+              {canCancel && photos.length < 4 && (
+                <TouchableOpacity style={styles.photoAdd} onPress={addPhoto} disabled={photoBusy}>
+                  {photoBusy ? <ActivityIndicator color={Colors.accent} /> : <Ionicons name="camera-outline" size={22} color={Colors.accent} />}
+                  <Text style={styles.photoAddText}>{t('order.addPhoto')}</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          )}
+        </View>
 
         <OrderTimeline
           stage={stage}
           role="customer"
           createdAt={booking.createdAt}
+          paidAt={booking.paidAt}
+          tripStartedAt={booking.tripStartedAt}
+          arrivedAt={booking.arrivedAt}
+          serviceStartedAt={booking.serviceStartedAt}
           completedAt={booking.completedAt}
           confirmedAt={booking.confirmedAt}
           releasedAt={booking.releasedAt}
         />
+
+        {canCancel && (
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => setPrompt('cancel')}>
+            <Ionicons name="close-circle-outline" size={18} color={Colors.error} />
+            <Text style={styles.cancelBtnText}>{t('order.cancel')}</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       <BudgetIncreaseModal
@@ -341,294 +421,80 @@ export default function OrderTracking() {
         visible={showFeedbackModal}
         onClose={() => setShowFeedbackModal(false)}
         bookingId={String(id)}
-        providerName={booking.providerName || 'Provider'}
+        providerName={booking.providerName || t('common.provider')}
         onSubmitFeedback={handleSubmitFeedback}
       />
 
       <PromptModal
         visible={prompt !== null}
-        title={prompt === 'report' ? t('workflow.completion.reportTitle') : t('workflow.completion.revision')}
-        placeholder={prompt === 'report' ? t('workflow.completion.reportPlaceholder') : t('workflow.completion.revisionPlaceholder')}
-        confirmLabel={prompt === 'report' ? t('workflow.completion.report') : t('workflow.completion.revision')}
-        destructive={prompt === 'report'}
+        title={prompt === 'report' ? t('workflow.completion.reportTitle') : prompt === 'cancel' ? t('order.cancelTitle') : t('workflow.completion.revision')}
+        message={prompt === 'cancel' ? t('order.cancelBody') : undefined}
+        placeholder={prompt === 'report' ? t('workflow.completion.reportPlaceholder') : prompt === 'cancel' ? t('order.cancelReason') : t('workflow.completion.revisionPlaceholder')}
+        confirmLabel={prompt === 'report' ? t('workflow.completion.report') : prompt === 'cancel' ? t('order.cancelConfirm') : t('workflow.completion.revision')}
+        destructive={prompt === 'report' || prompt === 'cancel'}
+        optional={prompt === 'cancel'}
         onCancel={() => setPrompt(null)}
         onSubmit={handlePromptSubmit}
       />
+
+      <ImageViewerModal visible={!!viewing} imageUrl={viewing} onClose={() => setViewing(null)} />
     </SafeAreaView>
+  );
+}
+
+function DetailRow({ icon, text }: { icon: any; text: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <Ionicons name={icon} size={16} color={Colors.textMuted} />
+      <Text style={styles.detailText}>{text}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   center: { justifyContent: 'center', alignItems: 'center' },
-  errorText: { fontSize: 16, color: '#64748B', fontWeight: '600' },
-  backBtnText: { marginTop: 12, padding: 8 },
-  header: { 
-    padding: 16, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#E2E8F0',
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', flex: 1, marginLeft: 12 },
-  statusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+  errorText: { fontSize: 16, color: '#64748B', fontWeight: '600', marginTop: 8, textAlign: 'center' },
+  retryBtn: { marginTop: 12, padding: 8 },
+  header: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center' },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', textAlign: 'left' },
+  orderNumber: { color: '#64748B', fontSize: 12, fontWeight: '700', textAlign: 'left' },
+  statusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, maxWidth: 150 },
   statusBadgeText: { fontWeight: '700', fontSize: 12 },
   content: { padding: 20, paddingBottom: 40 },
-  
-  paymentCard: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  paymentHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 10 },
-  paymentTitle: { fontSize: 18, fontWeight: '900', color: '#0F172A' },
-  paymentDesc: { fontSize: 14, color: '#475569', lineHeight: 22, marginBottom: 16 },
-  bankDetailsBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  bankLabel: { fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: '700', marginBottom: 4 },
-  bankValue: { fontSize: 15, color: '#0F172A', fontWeight: '600', marginBottom: 14, letterSpacing: 0.2 },
-  uploadBtn: {
-    backgroundColor: '#2E8B57',
-    padding: 16,
-    borderRadius: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#2E8B57',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6
-  },
-  uploadBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  
-  successCard: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  successText: { color: '#065F46', fontWeight: '700', marginLeft: 12, flex: 1, lineHeight: 20 },
-  
-  infoCard: {
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  cardTitle: { fontSize: 16, fontWeight: '800', marginBottom: 4 },
-  cardDesc: { fontSize: 13, color: '#64748B', lineHeight: 20 },
-  
-  mapPlaceholder: {
-    height: 150,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderStyle: 'dashed'
-  },
-  mapText: { fontSize: 14, color: '#64748B', fontWeight: '600', marginTop: 8 },
-  
-  providerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 24,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2
-  },
+  infoCard: { borderWidth: 1, borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  cardTitle: { fontSize: 16, fontWeight: '800', marginBottom: 4, textAlign: 'left' },
+  cardDesc: { fontSize: 13, color: '#64748B', lineHeight: 20, textAlign: 'left' },
+  providerCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 24, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0' },
   providerAvatar: { width: 44, height: 44, backgroundColor: '#F1F5F9', borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  providerInfo: { flex: 1, marginLeft: 14 },
-  providerName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
-  providerRating: { color: '#64748B', marginTop: 3, fontSize: 13, fontWeight: '500' },
-  chatBtn: { width: 44, height: 44, backgroundColor: '#2E8B57', borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  
-  sectionTitle: { fontSize: 18, fontWeight: '800', marginBottom: 16, color: '#0F172A' },
-  timeline: { paddingLeft: 6, marginBottom: 20 },
-  timelineItem: { flexDirection: 'row', alignItems: 'center' },
-  dot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#CBD5E1', marginRight: 16, borderWidth: 2, borderColor: '#fff' },
-  dotActive: { backgroundColor: '#2E8B57', shadowColor: '#2E8B57', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 4 },
-  timelineText: { fontSize: 15, color: '#334155', fontWeight: '600' },
-  timelineLine: { width: 2, height: 24, backgroundColor: '#E2E8F0', marginLeft: 6, marginVertical: 4 },
-  objectionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FEF2F2', padding: 14, borderRadius: 16, marginTop: 20, borderWidth: 1, borderColor: '#FECACA' },
-  objectionBtnText: { color: '#EF4444', fontWeight: '800', fontSize: 13 },
-  
-  escrowBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 20
-  },
-  escrowBannerTitle: {
-    color: '#065F46',
-    fontWeight: '800',
-    fontSize: 14
-  },
-  escrowBannerSub: {
-    color: '#047857',
-    fontSize: 12,
-    marginTop: 2,
-    lineHeight: 18
-  },
-  confirmationCard: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 20
-  },
-  confirmationCardTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1E3A8A',
-    textAlign: 'center',
-    marginTop: 10
-  },
-  confirmationCardSub: {
-    fontSize: 13,
-    color: '#3B82F6',
-    textAlign: 'center',
-    marginTop: 6,
-    marginBottom: 16,
-    lineHeight: 18
-  },
-  confirmationActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%'
-  },
-  actionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 14
-  },
-  confirmBtn: {
-    backgroundColor: '#10B981'
-  },
-  reportBtn: {
-    backgroundColor: '#EF4444'
-  },
-  confirmBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13
-  },
-  reportBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13
-  },
-  successConfirmedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderColor: '#86EFAC',
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20
-  },
-  biddingHeaderCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#334155'
-  },
-  biddingHeaderTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#F8FAFC'
-  },
-  biddingHeaderSub: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2
-  },
-  budgetBadgeWrap: {
-    backgroundColor: '#0F172A',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155'
-  },
-  budgetLabel: {
-    fontSize: 10,
-    color: '#94A3B8',
-    fontWeight: '700',
-    textTransform: 'uppercase'
-  },
-  budgetValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#F59E0B',
-    marginTop: 2
-  },
-  increaseBudgetBtn: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 14,
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 16,
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 3
-  },
-  increaseBudgetBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 14
-  }
+  providerInfo: { flex: 1, marginHorizontal: 14 },
+  providerName: { fontSize: 16, fontWeight: '800', color: '#0F172A', textAlign: 'left' },
+  providerMeta: { color: '#64748B', marginTop: 3, fontSize: 13, fontWeight: '500', textAlign: 'left' },
+  sectionTitle: { fontSize: 16, fontWeight: '800', marginBottom: 10, color: '#0F172A', textAlign: 'left' },
+  detailsCard: { backgroundColor: '#fff', borderRadius: 20, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 },
+  detailText: { flex: 1, fontSize: 14, color: '#334155', fontWeight: '600', textAlign: 'left' },
+  description: { fontSize: 14, color: '#475569', lineHeight: 21, marginTop: 4, textAlign: 'left' },
+  photo: { width: 84, height: 84, borderRadius: 12, backgroundColor: '#E2E8F0' },
+  photoRemove: { position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(15,23,42,0.7)', alignItems: 'center', justifyContent: 'center' },
+  photoAdd: { width: 84, height: 84, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.accent, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#F0FDF4' },
+  photoAddText: { fontSize: 11, fontWeight: '700', color: Colors.accent },
+  confirmationCard: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1, borderRadius: 20, padding: 20, alignItems: 'center', marginBottom: 20 },
+  confirmationCardTitle: { fontSize: 16, fontWeight: '800', color: '#1E3A8A', textAlign: 'center', marginTop: 10 },
+  confirmationActionsRow: { flexDirection: 'row', gap: 10, width: '100%' },
+  actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 14 },
+  confirmBtn: { backgroundColor: '#10B981' },
+  reportBtn: { backgroundColor: '#EF4444' },
+  actionBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
+  successConfirmedCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 20 },
+  biddingHeaderCard: { backgroundColor: '#1E293B', borderRadius: 20, padding: 16, flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
+  biddingHeaderTitle: { fontSize: 16, fontWeight: '800', color: '#F8FAFC', textAlign: 'left' },
+  biddingHeaderSub: { fontSize: 12, color: '#94A3B8', marginTop: 2, textAlign: 'left' },
+  budgetBadgeWrap: { backgroundColor: '#0F172A', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center', borderWidth: 1, borderColor: '#334155', marginStart: 10 },
+  budgetLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '700', textTransform: 'uppercase' },
+  budgetValue: { fontSize: 14, fontWeight: '800', color: '#F59E0B', marginTop: 2 },
+  increaseBudgetBtn: { backgroundColor: '#3B82F6', borderRadius: 14, height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 },
+  increaseBudgetBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  cancelBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: 14, borderWidth: 1.5, borderColor: '#FECACA', backgroundColor: '#FFF5F5', marginTop: 8 },
+  cancelBtnText: { color: Colors.error, fontWeight: '800', fontSize: 14 },
 });

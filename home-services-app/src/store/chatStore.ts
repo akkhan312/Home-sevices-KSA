@@ -32,7 +32,9 @@ export interface ChatMessage {
 
 export interface Conversation {
   bookingId: string;
+  category?: string;
   categoryName: string;
+  communication?: { chat: boolean; call: boolean };
   bookingStatus: string;
   otherUser: {
     id: string;

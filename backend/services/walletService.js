@@ -1,5 +1,5 @@
 const supabase = require('../supabase');
-const { HttpError, emitToUser, emitToRole, notifyAdmins } = require('./access');
+const { HttpError, emitToUser, emitToRole, notifyAdmins, notifyUser } = require('./access');
 const { addMoney } = require('./money');
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -152,15 +152,14 @@ async function resolveWithdrawal({ withdrawalId, status, note, adminId, adminNam
     target_id: withdrawalId,
     details: `Withdrawal of SAR ${current.amount} marked ${status}${note ? `: ${note}` : ''}`,
   });
-  await supabase.from('notifications').insert({
-    user_id: current.provider_id,
-    title: status === 'rejected' ? '❌ Withdrawal Rejected' : '✅ Withdrawal Approved',
-    body: status === 'rejected'
+  await notifyUser(
+    current.provider_id,
+    status === 'rejected' ? '❌ Withdrawal Rejected' : '✅ Withdrawal Approved',
+    status === 'rejected'
       ? `Your withdrawal of SAR ${current.amount} was rejected and returned to your wallet.${note ? ` Reason: ${note}` : ''}`
       : `Your withdrawal of SAR ${current.amount} has been ${status}.`,
-    type: 'withdrawal_update',
-    read: false,
-  });
+    { type: 'withdrawal_update' }
+  );
 
   if (balance !== undefined) emitToUser(io, current.provider_id, 'wallet_updated', { userId: current.provider_id, balance });
   return updated;

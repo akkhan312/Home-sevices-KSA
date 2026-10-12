@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, SafeAreaView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { apiFetch } from '../../src/services/apiClient';
+import { BackButton } from '../../src/components/ui/BackButton';
+import { SERVICES, serviceName } from '../../src/constants/catalog';
 
 interface PaymentSettings {
   bankName: string;
@@ -18,10 +20,10 @@ interface CommissionRule {
   percent: string;
 }
 
-// Service categories used by the request flow (see app/(customer)/booking/create.tsx).
-const KNOWN_CATEGORIES = ['cleaning', 'plumbing', 'ac', 'electrical', 'painting', 'maintenance', 'carpentry', 'gardening'];
+const KNOWN_CATEGORIES = SERVICES.map((s) => s.id as string);
 
 export default function AdminSettingsScreen() {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [payment, setPayment] = useState<PaymentSettings>({ bankName: '', accountName: '', iban: '', accountNumber: '', instructions: '', referencePrefix: 'BP' });
   const [defaultPercent, setDefaultPercent] = useState('10');
@@ -37,7 +39,7 @@ export default function AdminSettingsScreen() {
         setDefaultPercent(String(data.commission.defaultPercent));
         setRules(data.commission.rules.map((r: any) => ({ category: r.category, percent: String(r.percent) })));
       } catch (e: any) {
-        Alert.alert('Error', e.message);
+        Alert.alert(t('common.error'), e.message);
       } finally {
         setLoading(false);
       }
@@ -50,9 +52,9 @@ export default function AdminSettingsScreen() {
     try {
       const saved = await apiFetch('/admin/settings/payment', { method: 'PUT', body: payment });
       setPayment({ ...payment, ...saved });
-      Alert.alert('Saved', 'Customers will see these bank details on the payment screen.');
+      Alert.alert('✅', t('adminSettings.bankSaved'));
     } catch (e: any) {
-      Alert.alert('Could not save', e.message);
+      Alert.alert(t('common.error'), e.message);
     } finally {
       setSavingBank(false);
     }
@@ -68,9 +70,9 @@ export default function AdminSettingsScreen() {
       const saved = await apiFetch('/admin/settings/commission', { method: 'PUT', body });
       setDefaultPercent(String(saved.defaultPercent));
       setRules(saved.rules.map((r: any) => ({ category: r.category, percent: String(r.percent) })));
-      Alert.alert('Saved', 'New commission rates apply to providers selected from now on. Existing orders keep their rate.');
+      Alert.alert('✅', t('adminSettings.commissionSaved'));
     } catch (e: any) {
-      Alert.alert('Could not save', e.message);
+      Alert.alert(t('common.error'), e.message);
     } finally {
       setSavingCommission(false);
     }
@@ -104,51 +106,44 @@ export default function AdminSettingsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-          <Ionicons name="arrow-back" size={22} color="#0F172A" />
-        </TouchableOpacity>
-        <Text style={styles.title}>Platform Settings</Text>
+        <BackButton />
+        <Text style={styles.title}>{t('adminSettings.title')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Ionicons name="business-outline" size={20} color="#1E3A5F" />
-            <Text style={styles.cardTitle}>Bank details for customer payments</Text>
+            <Text style={styles.cardTitle}>{t('adminSettings.bankTitle')}</Text>
           </View>
-          <Text style={styles.help}>Shown to customers after they select a provider. Only customer-safe details are stored here.</Text>
-          {field('bankName', 'Bank name', { placeholder: 'e.g. Al Rajhi Bank' })}
-          {field('accountName', 'Account name', { placeholder: 'Registered company name' })}
-          {field('iban', 'IBAN', { placeholder: 'SA00 0000 0000 0000 0000 0000', caps: true })}
-          {field('accountNumber', 'Account number (optional)')}
-          {field('referencePrefix', 'Payment reference prefix', { placeholder: 'BP', caps: true })}
-          {field('instructions', 'Payment instructions', { placeholder: 'e.g. Include the payment reference in the transfer note.', multiline: true })}
+          <Text style={styles.help}>{t('adminSettings.bankHelp')}</Text>
+          {field('bankName', t('auth.bankName'), { placeholder: t('banks.alRajhi') })}
+          {field('accountName', t('workflow.payment.accountName'), { placeholder: t('adminSettings.accountNamePlaceholder') })}
+          {field('iban', t('auth.iban'), { placeholder: 'SA00 0000 0000 0000 0000 0000', caps: true })}
+          {field('accountNumber', t('adminSettings.accountNumber'))}
+          {field('referencePrefix', t('adminSettings.prefix'), { placeholder: 'BP', caps: true })}
+          {field('instructions', t('adminSettings.instructions'), { placeholder: t('workflow.payment.referenceHint'), multiline: true })}
           <TouchableOpacity style={styles.save} onPress={saveBank} disabled={savingBank}>
-            {savingBank ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save bank details</Text>}
+            {savingBank ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>{t('adminSettings.saveBank')}</Text>}
           </TouchableOpacity>
         </View>
 
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Ionicons name="pie-chart-outline" size={20} color="#1E3A5F" />
-            <Text style={styles.cardTitle}>Commission</Text>
+            <Text style={styles.cardTitle}>{t('adminSettings.commissionTitle')}</Text>
           </View>
-          <Text style={styles.help}>The rate is locked into each order when the customer selects a provider, so changes never affect existing orders.</Text>
+          <Text style={styles.help}>{t('adminSettings.commissionHelp')}</Text>
 
           <View style={styles.ruleRow}>
-            <Text style={[styles.ruleCategory, { fontWeight: '900' }]}>Default (all services)</Text>
+            <Text style={[styles.ruleCategory, { fontWeight: '900' }]}>{t('adminSettings.default')}</Text>
             <TextInput style={styles.percentInput} value={defaultPercent} onChangeText={setDefaultPercent} keyboardType="decimal-pad" />
             <Text style={styles.percentSign}>%</Text>
           </View>
 
           {rules.map((rule, index) => (
             <View key={`${rule.category}-${index}`} style={styles.ruleRow}>
-              <TextInput
-                style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                value={rule.category}
-                onChangeText={(v) => setRules((prev) => prev.map((r, i) => (i === index ? { ...r, category: v } : r)))}
-                autoCapitalize="none"
-              />
+              <Text style={[styles.ruleCategory, { flex: 1 }]}>{serviceName(t, rule.category)}</Text>
               <TextInput
                 style={styles.percentInput}
                 value={rule.percent}
@@ -166,14 +161,14 @@ export default function AdminSettingsScreen() {
             <View style={styles.chips}>
               {unusedCategories.map((c) => (
                 <TouchableOpacity key={c} style={styles.chip} onPress={() => setRules((prev) => [...prev, { category: c, percent: defaultPercent }])}>
-                  <Text style={styles.chipText}>+ {c}</Text>
+                  <Text style={styles.chipText}>+ {serviceName(t, c)}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
           <TouchableOpacity style={styles.save} onPress={saveCommission} disabled={savingCommission}>
-            {savingCommission ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save commission</Text>}
+            {savingCommission ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>{t('adminSettings.saveCommission')}</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -185,7 +180,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   back: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginLeft: 12 },
+  title: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginStart: 12 },
   content: { padding: 16, paddingBottom: 60, maxWidth: 720, width: '100%', alignSelf: 'center' },
   card: { backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },

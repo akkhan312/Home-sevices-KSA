@@ -82,7 +82,7 @@ ${body}`)) onAcceptOffer(offer.id);
         {/* Sort Chips */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sortRow}>
           {[
-            { id: 'price', label: '💰 SAR' },
+            { id: 'price', label: `💰 ${t('common.sarSymbol')}` },
             { id: 'rating', label: '⭐' },
             { id: 'eta', label: '⚡' },
           ].map((s) => (
@@ -137,7 +137,7 @@ ${body}`)) onAcceptOffer(offer.id);
 
               {/* Price Tag */}
               <View style={styles.priceWrap}>
-                <Text style={styles.priceVal}>SAR {offer.price}</Text>
+                <Text style={styles.priceVal}>{t('common.sar', { amount: offer.price })}</Text>
                 <Text style={styles.etaText}>{t('workflow.proposals.arrival')}: {offer.etaMinutes} {t('workflow.proposals.minutes')}</Text>
                 <Text style={styles.etaText}>{t('workflow.proposals.duration')}: {offer.completionHours} {t('workflow.proposals.hours')}</Text>
               </View>

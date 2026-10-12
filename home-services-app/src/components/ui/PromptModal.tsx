@@ -10,12 +10,14 @@ interface PromptModalProps {
   placeholder?: string;
   confirmLabel: string;
   destructive?: boolean;
+  /** Allow submitting without text (e.g. an optional reason). */
+  optional?: boolean;
   onCancel: () => void;
   onSubmit: (text: string) => Promise<void> | void;
 }
 
 /** Cross-platform replacement for Alert.prompt (which only exists on iOS). */
-export function PromptModal({ visible, title, message, placeholder, confirmLabel, destructive, onCancel, onSubmit }: PromptModalProps) {
+export function PromptModal({ visible, title, message, placeholder, confirmLabel, destructive, optional, onCancel, onSubmit }: PromptModalProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,7 +27,7 @@ export function PromptModal({ visible, title, message, placeholder, confirmLabel
   }, [visible]);
 
   const submit = async () => {
-    if (!text.trim() || busy) return;
+    if ((!optional && !text.trim()) || busy) return;
     setBusy(true);
     try {
       await onSubmit(text.trim());
@@ -55,9 +57,9 @@ export function PromptModal({ visible, title, message, placeholder, confirmLabel
               <Text style={styles.cancelText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.btn, { backgroundColor: destructive ? Colors.error : Colors.accent, opacity: text.trim() ? 1 : 0.5 }]}
+              style={[styles.btn, { backgroundColor: destructive ? Colors.error : Colors.accent, opacity: optional || text.trim() ? 1 : 0.5 }]}
               onPress={submit}
-              disabled={!text.trim() || busy}
+              disabled={(!optional && !text.trim()) || busy}
             >
               {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmText}>{confirmLabel}</Text>}
             </TouchableOpacity>

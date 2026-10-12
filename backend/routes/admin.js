@@ -275,6 +275,32 @@ router.patch('/bookings/:id/refund', async (req, res) => {
   }
 });
 
+// Orders under dispute with the most recent problem report, for the admin decision (release or refund).
+router.get('/bookings/disputed', async (req, res) => {
+  try {
+    const { data: bookings, error } = await supabase.from('bookings').select('*').eq('status', 'disputed').order('updated_at', { ascending: false });
+    if (error) throw error;
+    const ids = (bookings || []).map((b) => b.id);
+    const { data: reports } = ids.length
+      ? await supabase.from('reports').select('*').in('booking_id', ids).order('created_at', { ascending: false })
+      : { data: [] };
+    const latest = new Map();
+    for (const r of reports || []) if (!latest.has(r.booking_id)) latest.set(r.booking_id, r);
+    res.json(
+      (bookings || []).map((b) => {
+        const r = latest.get(b.id);
+        return {
+          ...mapBookingToFrontend(b),
+          disputedAt: b.disputed_at || null,
+          report: r ? { id: r.id, reason: r.reason, description: r.description || '', reporterId: r.reporter_id, createdAt: r.created_at } : null,
+        };
+      })
+    );
+  } catch (error) {
+    sendError(res, error, 'Failed to load disputes');
+  }
+});
+
 router.post('/bookings/:id/resolve-dispute', async (req, res) => {
   try {
     res.json(await resolveDispute({ bookingId: req.params.id, admin: req.user, resolution: req.body.resolution, note: req.body.note, io: req.app.get('io') }));
@@ -629,30 +655,25 @@ router.get('/analytics', async (req, res) => {
     const cityRevenueMap = {};
     const providerEarningsMap = {};
 
-    bookings.forEach((b) => {
+    // Revenue only counts money actually received (refunded orders are REFUNDED, not PAID).
+    const paidBookings = bookings.filter((b) => b.payment_status === PAYMENT.PAID);
+    const paidMonth = (b) => (b.paid_at || b.created_at || '').slice(0, 7);
+
+    paidBookings.forEach((b) => {
       const amt = Number(b.price || 0);
-      const fee = Number(b.commission || amt * 0.15);
-      const earn = Number(b.provider_earnings || amt - fee);
-      const dateStr = (b.created_at || '').slice(0, 10);
-      const monthStr = (b.created_at || '').slice(0, 7);
+      const fee = Number(b.commission || 0);
+      const earn = Number(b.provider_earnings || 0);
+      const dateStr = (b.paid_at || b.created_at || '').slice(0, 10);
 
-      if (b.payment_status === PAYMENT.PAID) {
-        totalRevenue += amt;
-        platformFeeTotal += fee;
-        providerEarningsTotal += earn;
+      totalRevenue += amt;
+      platformFeeTotal += fee;
+      providerEarningsTotal += earn;
+      if (dateStr === todayStr) todayRevenue += amt;
+      if (paidMonth(b) === thisMonthStr) monthlyRevenue += amt;
 
-        if (dateStr === todayStr) todayRevenue += amt;
-        if (monthStr === thisMonthStr) monthlyRevenue += amt;
-      }
-
-      // Categories
       const cat = b.category_name || b.category || 'General';
       categoryRevenueMap[cat] = (categoryRevenueMap[cat] || 0) + amt;
-
-      // Provider
-      if (b.provider_name) {
-        providerEarningsMap[b.provider_name] = (providerEarningsMap[b.provider_name] || 0) + earn;
-      }
+      if (b.provider_name) providerEarningsMap[b.provider_name] = (providerEarningsMap[b.provider_name] || 0) + earn;
     });
 
     const activeProviders = users.filter((u) => u.role === 'provider').length;
@@ -670,8 +691,8 @@ router.get('/analytics', async (req, res) => {
       const label = d.toLocaleString('default', { month: 'short' });
       const mKey = d.toISOString().slice(0, 7);
 
-      const mRev = bookings
-        .filter((b) => (b.created_at || '').slice(0, 7) === mKey)
+      const mRev = paidBookings
+        .filter((b) => paidMonth(b) === mKey)
         .reduce((sum, b) => sum + Number(b.price || 0), 0);
 
       monthlyTrend.push({ month: label, revenue: mRev });

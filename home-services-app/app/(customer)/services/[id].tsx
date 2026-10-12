@@ -1,81 +1,93 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
+import { apiFetch } from '../../../src/services/apiClient';
+import { useAuthStore } from '../../../src/store/authStore';
+import { BackButton } from '../../../src/components/ui/BackButton';
+import { ProviderCard, PublicProvider } from '../../../src/components/ui/ProviderCard';
+import { getService, cityLabel } from '../../../src/constants/catalog';
+import { Colors } from '../../../src/theme';
 
 export default function ServiceDetails() {
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { t } = useTranslation();
+  const { user } = useAuthStore();
+  const service = getService(id);
+  const [providers, setProviders] = useState<PublicProvider[] | null>(null);
 
-  // Mock service data
-  const service = {
-    id,
-    name: 'Home Cleaning',
-    description: 'Professional cleaning services for your home. Includes dusting, vacuuming, mopping, and bathroom cleaning. We use eco-friendly products to ensure a safe environment for your family.',
-    price: 'SAR 150',
-    duration: '2 Hours',
-    rating: '4.8',
-    reviews: 124,
-  };
+  useEffect(() => {
+    if (!service) return;
+    const params = new URLSearchParams({ category: service.id });
+    if (user?.city) params.set('city', user.city);
+    apiFetch<PublicProvider[]>(`/providers?${params.toString()}`)
+      .then(setProviders)
+      .catch(() => setProviders([]));
+  }, [service?.id, user?.city]);
+
+  if (!service) {
+    return (
+      <SafeAreaView style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={styles.description}>{t('errors.notFound')}</Text>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={{ color: Colors.accent, fontWeight: '800', marginTop: 12 }}>{t('common.back')}</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  const request = () => router.push({ pathname: '/(customer)/booking/create', params: { category: service.id } });
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top Header Bar */}
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#0F172A" />
-        </TouchableOpacity>
-        <Text style={styles.topTitle}>Service Details</Text>
+        <BackButton />
+        <Text style={styles.topTitle}>{t(`categories.${service.id}`)}</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.imagePlaceholder}>
-          <Ionicons name="sparkles" size={80} color="#2E8B57" />
+        <View style={[styles.hero, { backgroundColor: `${service.color}14` }]}>
+          <View style={[styles.heroIcon, { backgroundColor: `${service.color}26` }]}>
+            <Ionicons name={service.icon} size={56} color={service.color} />
+          </View>
         </View>
 
         <View style={styles.content}>
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>{service.name}</Text>
-            <Text style={styles.price}>{service.price}</Text>
-          </View>
+          <Text style={styles.title}>{t(`categories.${service.id}`)}</Text>
+          <Text style={styles.description}>{t(`catalog.descriptions.${service.id}`)}</Text>
 
-          <View style={styles.metaRow}>
-            <View style={styles.metaItem}>
-              <Ionicons name="star" size={16} color="#F59E0B" />
-              <Text style={styles.metaText}>{service.rating} ({service.reviews} reviews)</Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Ionicons name="time" size={16} color="#64748B" />
-              <Text style={styles.metaText}>{service.duration}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.sectionTitle}>Description</Text>
-          <Text style={styles.description}>{service.description}</Text>
-          
-          <Text style={styles.sectionTitle}>What's included?</Text>
-          <View style={styles.includedList}>
-            {[
-              'Living room & bedrooms cleaning',
-              'Kitchen & bathrooms cleaning',
-              'Floor vacuuming & mopping',
-              'Dusting all surfaces'
-            ].map((item, idx) => (
-              <View key={idx} style={styles.includedItemRow}>
-                <Ionicons name="checkmark-circle" size={20} color="#2E8B57" style={{ marginRight: 10 }} />
-                <Text style={styles.includedText}>{item}</Text>
+          <Text style={styles.sectionTitle}>{t('serviceDetail.typicalPrices')}</Text>
+          <View style={styles.optionsCard}>
+            {service.options.map((o, i) => (
+              <View key={o.key} style={[styles.optionRow, i < service.options.length - 1 && styles.optionBorder]}>
+                <Ionicons name="checkmark-circle" size={18} color={Colors.accent} />
+                <Text style={styles.optionText}>{t(`catalog.options.${o.key}`)}</Text>
+                <Text style={styles.optionPrice}>{t('common.sar', { amount: o.price })}</Text>
               </View>
             ))}
           </View>
+          <Text style={styles.hint}>{t('wizard.service.priceHint')}</Text>
+
+          <Text style={styles.sectionTitle}>
+            {user?.city ? t('serviceDetail.providersIn', { city: cityLabel(t, user.city) }) : t('serviceDetail.providers')}
+          </Text>
+          {providers === null ? (
+            <ActivityIndicator color={Colors.accent} style={{ marginVertical: 20 }} />
+          ) : providers.length === 0 ? (
+            <Text style={styles.hint}>{t('serviceDetail.noProviders')}</Text>
+          ) : (
+            providers.slice(0, 5).map((p) => (
+              <ProviderCard key={p.id} provider={p} category={service.id} onPressCard={() => router.push(`/(customer)/provider/${p.id}`)} />
+            ))
+          )}
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <TouchableOpacity 
-          style={styles.bookBtn}
-          onPress={() => router.push({ pathname: '/(customer)/booking/create', params: { category: String(id), categoryName: service.name } })}
-        >
-          <Text style={styles.bookBtnText}>Book Now</Text>
+        <TouchableOpacity style={styles.bookBtn} onPress={request}>
+          <Text style={styles.bookBtnText}>{t('workflow.requestService')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -85,51 +97,20 @@ export default function ServiceDetails() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
   topTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  imagePlaceholder: {
-    height: 200,
-    backgroundColor: '#F0FDF4',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  hero: { height: 180, justifyContent: 'center', alignItems: 'center' },
+  heroIcon: { width: 110, height: 110, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 24 },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  title: { fontSize: 24, fontWeight: '900', color: '#0F172A', flex: 1 },
-  price: { fontSize: 24, fontWeight: '900', color: '#2E8B57' },
-  metaRow: {
-    flexDirection: 'row',
-    marginBottom: 24,
-    gap: 16,
-  },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { color: '#64748B', fontSize: 14, fontWeight: '600' },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 12, marginTop: 12 },
-  description: { fontSize: 15, color: '#475569', lineHeight: 24, marginBottom: 24 },
-  includedList: { marginBottom: 32, gap: 10 },
-  includedItemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  includedText: { fontSize: 15, color: '#334155', fontWeight: '500' },
-  footer: {
-    padding: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    backgroundColor: '#fff',
-  },
-  bookBtn: {
-    backgroundColor: '#2E8B57',
-    padding: 18,
-    borderRadius: 16,
-    alignItems: 'center',
-    shadowColor: '#2E8B57',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6
-  },
-  bookBtnText: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  title: { fontSize: 24, fontWeight: '900', color: '#0F172A', marginBottom: 10, textAlign: 'left' },
+  description: { fontSize: 15, color: '#475569', lineHeight: 24, textAlign: 'left' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 12, marginTop: 24, textAlign: 'left' },
+  optionsCard: { borderRadius: 18, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 14 },
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14 },
+  optionBorder: { borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  optionText: { flex: 1, fontSize: 15, color: '#334155', fontWeight: '600', textAlign: 'left' },
+  optionPrice: { fontSize: 14, fontWeight: '800', color: '#2E8B57' },
+  hint: { fontSize: 13, color: '#64748B', marginTop: 10, lineHeight: 19, textAlign: 'left' },
+  footer: { padding: 20, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' },
+  bookBtn: { backgroundColor: '#2E8B57', padding: 18, borderRadius: 16, alignItems: 'center' },
+  bookBtnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
 });

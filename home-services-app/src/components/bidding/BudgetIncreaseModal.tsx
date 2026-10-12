@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 
 interface BudgetIncreaseModalProps {
   visible: boolean;
@@ -19,13 +20,14 @@ export const BudgetIncreaseModal: React.FC<BudgetIncreaseModalProps> = ({
   currentBudget,
   onIncreaseBudget
 }) => {
+  const { t } = useTranslation();
   const [newBudget, setNewBudget] = useState(String(currentBudget + 30));
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     const numeric = parseFloat(newBudget);
     if (isNaN(numeric) || numeric <= currentBudget) {
-      Alert.alert('Invalid Budget', `New budget must be greater than current SAR ${currentBudget}.`);
+      Alert.alert(t('budgetModal.invalidTitle'), t('budgetModal.invalidBody', { amount: currentBudget }));
       return;
     }
 
@@ -34,7 +36,7 @@ export const BudgetIncreaseModal: React.FC<BudgetIncreaseModalProps> = ({
       await onIncreaseBudget(numeric);
       onClose();
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to increase budget.');
+      Alert.alert(t('common.error'), err.message || t('workflow.errors.generic'));
     } finally {
       setLoading(false);
     }
@@ -45,25 +47,25 @@ export const BudgetIncreaseModal: React.FC<BudgetIncreaseModalProps> = ({
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.overlay}>
         <View style={styles.container}>
           <View style={styles.header}>
-            <Text style={styles.title}>Increase Job Budget 🚀</Text>
+            <Text style={styles.title}>{t('bidding.increaseBudget')} 🚀</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Ionicons name="close" size={20} color="#94A3B8" />
             </TouchableOpacity>
           </View>
 
           <Text style={styles.desc}>
-            Current Budget: <Text style={{ color: '#F59E0B', fontWeight: '700' }}>SAR {currentBudget}</Text>
-            {'\n'}Increasing budget notifies all nearby technicians live to send higher quality bids.
+            {t('budgetModal.current')} <Text style={{ color: '#F59E0B', fontWeight: '700' }}>{t('common.sar', { amount: currentBudget })}</Text>
+            {'\n'}{t('budgetModal.body')}
           </Text>
 
           <View style={styles.inputWrap}>
-            <Text style={styles.currency}>SAR</Text>
+            <Text style={styles.currency}>{t('common.sarSymbol')}</Text>
             <TextInput
               style={styles.input}
               value={newBudget}
               onChangeText={setNewBudget}
               keyboardType="numeric"
-              placeholder={`e.g. ${currentBudget + 30}`}
+              placeholder={String(currentBudget + 30)}
               placeholderTextColor="#64748B"
             />
           </View>
@@ -76,7 +78,7 @@ export const BudgetIncreaseModal: React.FC<BudgetIncreaseModalProps> = ({
                 style={styles.quickChip}
                 onPress={() => setNewBudget(String(currentBudget + add))}
               >
-                <Text style={styles.quickChipText}>+ SAR {add}</Text>
+                <Text style={styles.quickChipText}>+ {t('common.sar', { amount: add })}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -87,8 +89,8 @@ export const BudgetIncreaseModal: React.FC<BudgetIncreaseModalProps> = ({
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="sparkles" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.submitBtnText}>Broadcast New Budget</Text>
+                  <Ionicons name="sparkles" size={18} color="#FFFFFF" style={{ marginEnd: 6 }} />
+                  <Text style={styles.submitBtnText}>{t('budgetModal.submit')}</Text>
                 </>
               )}
             </LinearGradient>

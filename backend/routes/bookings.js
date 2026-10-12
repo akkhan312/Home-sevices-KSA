@@ -3,7 +3,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const { mapBookingToFrontend } = require('../utils/mappers');
 const { authenticate, requireRole } = require('../middleware/auth');
-const { uploadSlip, discardUpload } = require('../middleware/upload');
+const { uploadSlip, uploadRequestPhoto, discardUpload } = require('../middleware/upload');
 const {
   OPEN_STATUSES,
   LIVE_LOCATION_STATUSES,
@@ -16,15 +16,20 @@ const {
   emitToBooking,
   emitToRole,
   notifyUser,
+  notifyUsers,
   logStatus,
   sendError,
 } = require('../services/access');
-const { submitOrUpdateOffer, getOffersForBooking, acceptOffer, increaseBudget, submitReview, pricingFor } = require('../services/biddingService');
+const { submitOrUpdateOffer, getOffersForBooking, acceptOffer, increaseBudget, submitReview } = require('../services/biddingService');
 const { createObjection } = require('../services/reportService');
 const { getPaymentInstructions, submitPaymentProof, markPaid, AWAITING_PAYMENT } = require('../services/paymentService');
 const { confirmCompletion } = require('../services/payoutService');
-const { privatePathFor } = require('../services/files');
+const { privatePathFor, PRIVATE_PREFIX, isSafeName } = require('../services/files');
 const { isStripeConfigured, createBookingPaymentIntent, verifyBookingPayment } = require('../services/stripeService');
+const { MATCHING_FIELDS, matchesProvider, isApprovedActive } = require('../services/matching');
+const { isServiceCategory, normalizeCity } = require('../services/catalog');
+const liveLocation = require('../services/liveLocation');
+const storage = require('../services/storage');
 
 router.use(authenticate);
 
@@ -32,8 +37,12 @@ const now = () => new Date().toISOString();
 const text = (v, max) => (v === undefined || v === null ? null : String(v).trim().slice(0, max) || null);
 const view = (booking, user) => redactForViewer(mapBookingToFrontend(booking), booking, user);
 
+const MAX_PHOTOS = 4;
+// Requests and unpaid orders can be cancelled by the customer; paid orders go through a dispute/refund.
+const CANCELLABLE_STATUSES = [...OPEN_STATUSES, ...AWAITING_PAYMENT];
+
 async function loadProvider(userId) {
-  const { data } = await supabase.from('users').select('id, name, status, approval_status, service_categories, city').eq('id', userId).maybeSingle();
+  const { data } = await supabase.from('users').select(MATCHING_FIELDS).eq('id', userId).maybeSingle();
   return data;
 }
 
@@ -44,12 +53,28 @@ function assertApprovedProvider(provider) {
   }
 }
 
-/** A provider sees a request if it matches their services and (when both are known) their city. */
-function matchesProvider(booking, provider) {
-  const categories = provider.service_categories || [];
-  if (categories.length && booking.category && !categories.includes(booking.category)) return false;
-  if (provider.city && booking.city && provider.city.toLowerCase() !== booking.city.toLowerCase()) return false;
+/** Removes a provider's proposal while the request is still open; the request returns to "pending" when none are left. */
+async function withdrawOffer(booking, providerId, io) {
+  const { data: offer } = await supabase.from('booking_offers').select('id').eq('booking_id', booking.id).eq('provider_id', providerId).maybeSingle();
+  if (!offer) return false;
+  await supabase.from('booking_offers').delete().eq('id', offer.id);
+  const { count } = await supabase.from('booking_offers').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id);
+  if (!count) await supabase.from('bookings').update({ status: 'pending', updated_at: now() }).eq('id', booking.id).eq('status', 'BIDDING');
+  emitToBooking(io, booking, 'offer_withdrawn', { bookingId: booking.id, providerId, offerId: offer.id });
   return true;
+}
+
+/** Read-modify-write of the photo list, retried if the order changed in between. */
+async function updatePhotos(booking, change) {
+  let current = booking;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const next = change(Array.isArray(current.photos) ? current.photos : []);
+    const { data, error } = await supabase.from('bookings').update({ photos: next, updated_at: now() }).eq('id', current.id).eq('updated_at', current.updated_at).select().maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+    current = await fetchBooking(current.id);
+  }
+  throw new HttpError(409, 'The request was updated at the same time. Please try again.');
 }
 
 // ─── CUSTOMER: Create a service request ──────────────────────────────────────
@@ -60,9 +85,13 @@ router.post('/', requireRole('customer'), async (req, res) => {
     if (!b.category || !b.categoryName || !b.scheduledDate || !b.address) {
       throw new HttpError(400, 'Service, date and address are required');
     }
+    if (!isServiceCategory(b.category)) throw new HttpError(400, 'Please choose one of the available services');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.scheduledDate))) throw new HttpError(400, 'Please choose a valid date');
+    if (b.scheduledTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.scheduledTime))) throw new HttpError(400, 'Please choose a valid time');
     if (!Number.isFinite(price) || price <= 0 || price > 100000) throw new HttpError(400, 'Please provide a valid budget');
     const lat = Number(b.latitude);
     const lng = Number(b.longitude);
+    const hasCoords = b.latitude !== undefined && b.latitude !== null && b.longitude !== undefined && b.longitude !== null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
     const { data: booking, error } = await supabase
       .from('bookings')
@@ -79,10 +108,10 @@ router.post('/', requireRole('customer'), async (req, res) => {
         scheduled_date: text(b.scheduledDate, 20),
         scheduled_time: text(b.scheduledTime, 20),
         address: text(b.address, 500),
-        city: text(b.city, 60),
+        city: normalizeCity(b.city),
         area: text(b.area, 120),
-        latitude: b.latitude !== undefined && Number.isFinite(lat) ? lat : null,
-        longitude: b.longitude !== undefined && Number.isFinite(lng) ? lng : null,
+        latitude: hasCoords ? lat : null,
+        longitude: hasCoords ? lng : null,
         notes: text(b.notes, 2000),
         status: 'pending',
         payment_status: PAYMENT.UNPAID,
@@ -96,17 +125,17 @@ router.post('/', requireRole('customer'), async (req, res) => {
     try {
       const { data: providers } = await supabase
         .from('users')
-        .select('id, service_categories, city, status, approval_status')
+        .select(MATCHING_FIELDS)
         .eq('role', 'provider')
         .or('status.is.null,status.neq.suspended');
-      const matching = (providers || []).filter((p) => (p.approval_status || 'APPROVED') === 'APPROVED' && matchesProvider(booking, p));
+      const matching = (providers || []).filter((p) => isApprovedActive(p) && matchesProvider(booking, p));
       if (matching.length) {
         const title = `🔔 New request: ${booking.category_name}`;
         const body = `${booking.area || booking.city || 'Nearby'} · ${booking.scheduled_date}. Budget SAR ${price}. Send your proposal.`;
-        await supabase.from('notifications').insert(matching.map((p) => ({ user_id: p.id, title, body, type: 'new_request', data: { bookingId: booking.id }, read: false })));
+        await notifyUsers(matching.map((p) => p.id), title, body, { type: 'new_request', data: { bookingId: booking.id } });
         const io = req.app.get('io');
         for (const p of matching) {
-          io?.to(`user:${p.id}`).emit('new_job_alert', { title, body, bookingId: booking.id, categoryName: booking.category_name, price, scheduledDate: booking.scheduled_date, scheduledTime: booking.scheduled_time });
+          io?.to(`user:${p.id}`).emit('new_job_alert', { title, body, bookingId: booking.id, category: booking.category, categoryName: booking.category_name, price, scheduledDate: booking.scheduled_date, scheduledTime: booking.scheduled_time });
         }
       }
     } catch (notifErr) {
@@ -134,19 +163,31 @@ router.get('/my', async (req, res) => {
 router.get('/provider', requireRole('provider'), async (req, res) => {
   try {
     const provider = await loadProvider(req.user.id);
-    const approved = provider && provider.status !== 'suspended' && (provider.approval_status || 'APPROVED') === 'APPROVED';
+    const approved = isApprovedActive(provider);
 
-    const { data: jobs, error } = await supabase
-      .from('bookings')
-      .select('*')
-      .or(`status.in.(${OPEN_STATUSES.join(',')}),provider_id.eq.${req.user.id}`)
-      .order('created_at', { ascending: false })
-      .limit(200);
+    const [{ data: jobs, error }, { data: dismissals }] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select('*')
+        .or(`status.in.(${OPEN_STATUSES.join(',')}),provider_id.eq.${req.user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(200),
+      supabase.from('booking_dismissals').select('booking_id').eq('provider_id', req.user.id),
+    ]);
     if (error) throw error;
+    const dismissed = new Set((dismissals || []).map((d) => d.booking_id));
 
-    const visible = (jobs || []).filter((b) => b.provider_id === req.user.id || (approved && matchesProvider(b, provider)));
+    const visible = (jobs || []).filter((b) => b.provider_id === req.user.id || (approved && !dismissed.has(b.id) && matchesProvider(b, provider)));
+
+    // The provider's own proposal on each open request, so the app can show "quoted" vs "new".
+    const openIds = visible.filter((b) => OPEN_STATUSES.includes(b.status)).map((b) => b.id);
+    const { data: myOffers } = openIds.length
+      ? await supabase.from('booking_offers').select('booking_id, price, eta_minutes, completion_hours').eq('provider_id', req.user.id).in('booking_id', openIds)
+      : { data: [] };
+    const offerByBooking = new Map((myOffers || []).map((o) => [o.booking_id, { price: Number(o.price), etaMinutes: Number(o.eta_minutes), completionHours: Number(o.completion_hours) }]));
+
     res.set('X-Provider-Approval', provider?.approval_status || 'APPROVED');
-    res.json(visible.map((b) => view(b, req.user)));
+    res.json(visible.map((b) => ({ ...view(b, req.user), myOffer: offerByBooking.get(b.id) || null })));
   } catch (err) {
     sendError(res, err, 'Failed to fetch jobs');
   }
@@ -184,6 +225,9 @@ router.post('/:id/offers', requireRole('provider'), async (req, res) => {
       notes: req.body.notes,
     });
 
+    // A provider who quotes after hiding the request wants to see it again.
+    await supabase.from('booking_dismissals').delete().eq('booking_id', booking.id).eq('provider_id', req.user.id);
+
     const io = req.app.get('io');
     emitToBooking(io, booking, 'new_offer', offer);
     emitToBooking(io, booking, 'offer_updated', offer);
@@ -192,6 +236,33 @@ router.post('/:id/offers', requireRole('provider'), async (req, res) => {
     res.status(201).json(offer);
   } catch (err) {
     sendError(res, err, 'Failed to submit proposal');
+  }
+});
+
+// ─── PROVIDER: Withdraw own proposal ─────────────────────────────────────────
+router.delete('/:id/offers/mine', requireRole('provider'), async (req, res) => {
+  try {
+    const booking = await fetchBooking(req.params.id);
+    if (!OPEN_STATUSES.includes(booking.status)) throw new HttpError(400, 'Proposals can only be withdrawn while the customer is still choosing.');
+    const withdrawn = await withdrawOffer(booking, req.user.id, req.app.get('io'));
+    if (!withdrawn) throw new HttpError(404, 'You have not sent a proposal for this request.');
+    res.json({ withdrawn: true });
+  } catch (err) {
+    sendError(res, err, 'Failed to withdraw proposal');
+  }
+});
+
+// ─── PROVIDER: Not interested (hides an open request from the feed) ──────────
+router.post('/:id/dismiss', requireRole('provider'), async (req, res) => {
+  try {
+    const booking = await fetchBooking(req.params.id);
+    if (booking.provider_id === req.user.id) throw new HttpError(400, 'You are the selected provider for this order.');
+    const { error } = await supabase.from('booking_dismissals').upsert({ booking_id: booking.id, provider_id: req.user.id }, { onConflict: 'booking_id,provider_id' });
+    if (error) throw error;
+    if (OPEN_STATUSES.includes(booking.status)) await withdrawOffer(booking, req.user.id, req.app.get('io'));
+    res.json({ dismissed: true });
+  } catch (err) {
+    sendError(res, err, 'Failed to hide request');
   }
 });
 
@@ -239,8 +310,8 @@ router.post('/:id/reviews', requireRole('customer'), async (req, res) => {
 });
 
 // ─── Status progression ──────────────────────────────────────────────────────
+// A provider is only ever assigned by the customer selecting their proposal (POST /:id/accept-offer).
 const STATUS_TRANSITIONS = {
-  accepted: { from: OPEN_STATUSES, actor: 'provider' },
   ON_THE_WAY: { from: ['VERIFIED'], actor: 'assigned_provider', paid: true },
   ARRIVED: { from: ['ON_THE_WAY'], actor: 'assigned_provider', paid: true },
   IN_PROGRESS: { from: ['ARRIVED', 'REVISION_REQUESTED'], actor: 'assigned_provider', paid: true },
@@ -263,24 +334,12 @@ router.patch('/:id/status', async (req, res) => {
     if (!rule) throw new HttpError(400, 'Invalid status');
 
     const booking = await fetchBooking(req.params.id);
-    if (rule.actor === 'provider' && req.user.role !== 'provider') throw new HttpError(403, 'Only providers can accept requests');
     if (rule.actor === 'assigned_provider' && booking.provider_id !== req.user.id) throw new HttpError(403, 'Not authorized for this order');
     if (rule.actor === 'customer' && booking.customer_id !== req.user.id) throw new HttpError(403, 'Only the customer can request a revision');
     if (rule.paid && booking.payment_status !== PAYMENT.PAID) throw new HttpError(400, 'Payment must be verified before the service can start.', 'PAYMENT_REQUIRED');
     if (!rule.from.includes(booking.status)) throw new HttpError(400, `Cannot change status from ${booking.status} to ${target}.`);
 
     const updateData = { status: target, updated_at: now() };
-    if (target === 'accepted') {
-      const provider = await loadProvider(req.user.id);
-      assertApprovedProvider(provider);
-      Object.assign(updateData, await pricingFor(booking, booking.price), {
-        provider_id: req.user.id,
-        provider_name: provider.name,
-        payment_status: PAYMENT.UNPAID,
-        communication_status: 'LOCKED',
-        payment_reference: booking.order_number || `BP-${booking.id.slice(0, 8).toUpperCase()}`,
-      });
-    }
     if (target === 'ON_THE_WAY') updateData.trip_started_at = now();
     if (target === 'ARRIVED') updateData.arrived_at = now();
     if (target === 'IN_PROGRESS') updateData.service_started_at = now();
@@ -299,15 +358,12 @@ router.patch('/:id/status', async (req, res) => {
 
     // Live tracking stops automatically once the provider is no longer travelling / on site.
     if (LIVE_LOCATION_STATUSES.includes(booking.status) && !LIVE_LOCATION_STATUSES.includes(updated.status)) {
+      liveLocation.forget(booking.id);
       emitToBooking(io, updated, 'location:stopped', { bookingId: booking.id, reason: 'order_status' });
     }
 
     try {
       switch (target) {
-        case 'accepted':
-          await notifyUser(booking.customer_id, `✅ ${providerName} accepted your request`, 'Complete the payment to confirm your order.', { type: 'proposal_selected', data: { bookingId: booking.id } });
-          emitToBooking(io, updated, 'job_accepted', { bookingId: booking.id, providerName });
-          break;
         case 'ON_THE_WAY':
           await notifyUser(booking.customer_id, '🚚 Provider is on the way', `${providerName} is traveling to your location.`, { type: 'provider_on_the_way', data: { bookingId: booking.id } });
           emitToBooking(io, updated, 'provider_started', { bookingId: booking.id, status: 'ON_THE_WAY' });
@@ -378,6 +434,81 @@ router.post('/:id/report-issue', async (req, res) => {
     res.status(201).json({ message: 'Problem reported. Our support team will review it.', report, booking: view(updated, req.user) });
   } catch (err) {
     sendError(res, err, 'Failed to report problem');
+  }
+});
+
+// ─── CUSTOMER: Cancel a request or an unpaid order ───────────────────────────
+router.post('/:id/cancel', requireRole('customer'), async (req, res) => {
+  try {
+    const booking = await getParticipantBooking(req.params.id, req.user, { allowAdmin: false });
+    if (booking.status === 'cancelled') throw new HttpError(409, 'This order is already cancelled.');
+    if (booking.payment_status === PAYMENT.PAID) {
+      throw new HttpError(400, 'This order is already paid. Use "Report a problem" and our team will arrange a refund.', 'PAID_ORDER');
+    }
+    if ([PAYMENT.PENDING, PAYMENT.SUBMITTED].includes(booking.payment_status)) {
+      throw new HttpError(409, 'Your payment is being verified. Please contact support if you need to cancel.', 'PAYMENT_UNDER_REVIEW');
+    }
+    if (!CANCELLABLE_STATUSES.includes(booking.status)) throw new HttpError(400, 'This order can no longer be cancelled.');
+
+    const reason = text(req.body.reason, 500);
+    const ts = now();
+    const { data: updated, error } = await supabase
+      .from('bookings')
+      .update({ status: 'cancelled', communication_status: 'LOCKED', cancelled_at: ts, cancelled_by: req.user.id, cancellation_reason: reason, updated_at: ts })
+      .eq('id', booking.id)
+      .in('status', CANCELLABLE_STATUSES)
+      .in('payment_status', [PAYMENT.UNPAID, PAYMENT.REJECTED])
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!updated) throw new HttpError(409, 'The order changed while cancelling. Please refresh.');
+
+    const { data: offers } = await supabase.from('booking_offers').select('provider_id').eq('booking_id', booking.id);
+    await supabase.from('booking_offers').update({ status: 'cancelled', updated_at: ts }).eq('booking_id', booking.id);
+    await logStatus(booking.id, 'cancelled', req.user.id, `Cancelled by customer${reason ? `: ${reason}` : ''}`);
+
+    const affected = [booking.provider_id, ...(offers || []).map((o) => o.provider_id)];
+    await notifyUsers(affected, '🚫 Request cancelled', `The customer cancelled ${booking.category_name}${booking.order_number ? ` (${booking.order_number})` : ''}.`, {
+      type: 'request_cancelled',
+      data: { bookingId: booking.id },
+    });
+    emitToBooking(req.app.get('io'), updated, 'booking_updated', mapBookingToFrontend(updated), { includeAdmins: true });
+    res.json(view(updated, req.user));
+  } catch (err) {
+    sendError(res, err, 'Failed to cancel order');
+  }
+});
+
+// ─── CUSTOMER: Photos of the problem (shown to providers while they quote) ───
+router.post('/:id/photos', requireRole('customer'), uploadRequestPhoto.single('image'), async (req, res) => {
+  try {
+    if (!req.file) throw new HttpError(400, 'Please attach a photo');
+    const booking = await getParticipantBooking(req.params.id, req.user, { allowAdmin: false });
+    if (!CANCELLABLE_STATUSES.includes(booking.status)) throw new HttpError(400, 'Photos can only be added before the service starts.');
+    const stored = privatePathFor(req.file.filename);
+    const updated = await updatePhotos(booking, (list) => {
+      if (list.length >= MAX_PHOTOS) throw new HttpError(400, `You can add up to ${MAX_PHOTOS} photos`);
+      return [...list, stored];
+    });
+    res.status(201).json(view(updated, req.user));
+  } catch (err) {
+    discardUpload(req.file);
+    sendError(res, err, 'Failed to add photo');
+  }
+});
+
+router.delete('/:id/photos/:name', requireRole('customer'), async (req, res) => {
+  try {
+    const booking = await getParticipantBooking(req.params.id, req.user, { allowAdmin: false });
+    const { name } = req.params;
+    const stored = `${PRIVATE_PREFIX}${name}`;
+    if (!isSafeName(name) || !(booking.photos || []).includes(stored)) throw new HttpError(404, 'Photo not found');
+    if (!CANCELLABLE_STATUSES.includes(booking.status)) throw new HttpError(400, 'Photos can only be changed before the service starts.');
+    const updated = await updatePhotos(booking, (list) => list.filter((p) => p !== stored));
+    await storage.remove('private', name);
+    res.json(view(updated, req.user));
+  } catch (err) {
+    sendError(res, err, 'Failed to remove photo');
   }
 });
 

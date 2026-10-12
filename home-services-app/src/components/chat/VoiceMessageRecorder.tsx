@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { API_HOST } from '../../config/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -13,6 +14,7 @@ export const VoiceMessageRecorder: React.FC<VoiceMessageRecorderProps> = ({
   bookingId,
   onVoiceSent
 }) => {
+  const { t } = useTranslation();
   const [recording, setRecording] = useState<any>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [durationSec, setDurationSec] = useState(0);
@@ -54,7 +56,7 @@ export const VoiceMessageRecorder: React.FC<VoiceMessageRecorderProps> = ({
       const { Audio } = require('expo-av');
       const permission = await Audio.requestPermissionsAsync();
       if (permission.status !== 'granted') {
-        Alert.alert('Permission Required', 'Microphone access is required to record voice messages.');
+        Alert.alert(t('chat.micPermissionTitle'), t('chat.micPermissionBody'));
         return;
       }
 
@@ -152,7 +154,7 @@ export const VoiceMessageRecorder: React.FC<VoiceMessageRecorderProps> = ({
       onVoiceSent(data.url, duration);
     } catch (e: any) {
       // A local file path is not playable on the other device, so never send it as the message.
-      Alert.alert('Voice message not sent', e?.message || 'Please check your connection and try again.');
+      Alert.alert(t('chat.voiceFailed'), e?.message || t('workflow.errors.network'));
     } finally {
       setUploading(false);
       setDurationSec(0);
@@ -169,7 +171,7 @@ export const VoiceMessageRecorder: React.FC<VoiceMessageRecorderProps> = ({
     return (
       <View style={styles.recordingRow}>
         <ActivityIndicator color="#2563EB" size="small" />
-        <Text style={styles.sendingText}>Sending voice note...</Text>
+        <Text style={styles.sendingText}>{t('chat.sendingVoice')}</Text>
       </View>
     );
   }
@@ -179,7 +181,7 @@ export const VoiceMessageRecorder: React.FC<VoiceMessageRecorderProps> = ({
       <View style={styles.recordingRow}>
         <View style={styles.recordingDot} />
         <Text style={styles.timerText}>{formatTime(durationSec)}</Text>
-        <Text style={styles.slideCancelText}>Release to send</Text>
+        <Text style={styles.slideCancelText}>{t('chat.releaseToSend')}</Text>
 
         <TouchableOpacity style={styles.cancelBtn} onPress={cancelRecording}>
           <Ionicons name="trash" size={20} color="#EF4444" />

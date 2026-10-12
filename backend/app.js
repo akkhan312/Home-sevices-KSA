@@ -2,16 +2,16 @@ const config = require('./config');
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const fs = require('fs');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const supabase = require('./supabase');
 
-const { authenticate, requireRole, resolveToken } = require('./middleware/auth');
-const { uploadImage, UPLOAD_DIR, PRIVATE_UPLOAD_DIR } = require('./middleware/upload');
-const { mapUserToFrontend } = require('./utils/mappers');
+const { resolveToken } = require('./middleware/auth');
+const storage = require('./services/storage');
+const liveLocation = require('./services/liveLocation');
+const { normalizeCity } = require('./services/catalog');
 const {
   canView,
   isParticipant,
@@ -24,7 +24,7 @@ const {
 const { saveMessage } = require('./services/chatService');
 const { markPaid } = require('./services/paymentService');
 const { stripeClient } = require('./services/stripeService');
-const { verifySignature } = require('./services/files');
+const { verifySignature, isSafeName } = require('./services/files');
 
 const FILE_TYPES = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif', '.pdf': 'application/pdf', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.mp3': 'audio/mpeg', '.webm': 'audio/webm', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.3gp': 'audio/3gpp' };
 
@@ -93,20 +93,35 @@ function createApp({ enableRateLimit = true } = {}) {
     res.status(error ? 503 : 200).json({ status: error ? 'degraded' : 'ok', db: error ? 'unreachable' : 'ok', time: new Date().toISOString() });
   });
 
-  // Public uploads (profile pictures). The private folder is excluded and only reachable via signed URLs.
-  app.use('/uploads', (req, res, next) => (req.path.startsWith('/private') ? res.status(404).end() : next()));
-  app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d', index: false, dotfiles: 'deny' }));
-
-  // ─── Private files (receipts, chat media) via signed, expiring URLs ─────────
-  app.get('/api/files/:name', (req, res) => {
-    const { name } = req.params;
-    if (!verifySignature(name, req.query.exp, req.query.sig)) return res.status(403).json({ error: 'This link has expired or is invalid' });
-    const filePath = path.join(PRIVATE_UPLOAD_DIR, path.basename(name));
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    res.set('Cache-Control', 'private, max-age=3600');
+  async function sendStoredFile(res, visibility, name, cacheControl) {
+    const stream = await storage.open(visibility, name);
+    if (!stream) return res.status(404).json({ error: 'File not found' });
+    res.set('Cache-Control', cacheControl);
     res.set('Content-Type', FILE_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream');
     res.set('X-Content-Type-Options', 'nosniff');
-    fs.createReadStream(filePath).pipe(res);
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
+  }
+
+  // Public uploads (profile pictures). Private files are stored separately and only reachable via signed URLs.
+  app.get('/uploads/:name', async (req, res, next) => {
+    try {
+      if (!isSafeName(req.params.name)) return res.status(404).end();
+      await sendStoredFile(res, 'public', req.params.name, 'public, max-age=604800');
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ─── Private files (receipts, chat media, request photos) via signed, expiring URLs ─────
+  app.get('/api/files/:name', async (req, res, next) => {
+    try {
+      const { name } = req.params;
+      if (!verifySignature(name, req.query.exp, req.query.sig)) return res.status(403).json({ error: 'This link has expired or is invalid' });
+      await sendStoredFile(res, 'private', name, 'private, max-age=3600');
+    } catch (err) {
+      next(err);
+    }
   });
 
   app.use('/api/auth', require('./routes/auth'));
@@ -120,59 +135,10 @@ function createApp({ enableRateLimit = true } = {}) {
   app.use('/api/chat', require('./routes/chat'));
   app.use('/api/wallets', require('./routes/wallets'));
   app.use('/api/calls', require('./routes/calls'));
-
-  app.get('/api/users/me', authenticate, async (req, res) => {
-    try {
-      const { data: user, error } = await supabase.from('users').select('*').eq('id', req.user.id).single();
-      if (error) throw error;
-      res.json(mapUserToFrontend(user));
-    } catch (err) {
-      sendError(res, err, 'Failed to load profile');
-    }
-  });
-
-  app.get('/api/users/:id/summary', authenticate, async (req, res) => {
-    try {
-      const { data: user } = await supabase.from('users').select('id, name, role, profile_picture').eq('id', req.params.id).maybeSingle();
-      if (!user) throw new HttpError(404, 'User not found');
-      res.json({ id: user.id, name: user.name, role: user.role, profilePicture: config.toPublicUrl(user.profile_picture) || '' });
-    } catch (err) {
-      sendError(res, err, 'Failed to load user');
-    }
-  });
-
-  app.patch('/api/users/prices', authenticate, requireRole('provider'), async (req, res) => {
-    try {
-      const { prices } = req.body;
-      if (!prices || typeof prices !== 'object' || Array.isArray(prices)) throw new HttpError(400, 'Invalid prices object');
-      const clean = {};
-      for (const [k, v] of Object.entries(prices)) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n < 0 || n > 100000) throw new HttpError(400, `Invalid price for ${k}`);
-        clean[String(k).slice(0, 50)] = n;
-      }
-      const { data: user, error } = await supabase.from('users').update({ service_prices: clean, updated_at: new Date().toISOString() }).eq('id', req.user.id).select('id, service_prices').single();
-      if (error) throw error;
-      res.json({ message: 'Service prices updated', servicePrices: user.service_prices });
-    } catch (err) {
-      sendError(res, err, 'Failed to update prices');
-    }
-  });
-
-  app.post('/api/users/profile-picture', authenticate, uploadImage.single('image'), async (req, res) => {
-    try {
-      if (!req.file) throw new HttpError(400, 'No image uploaded');
-      const imageUrl = `/uploads/${req.file.filename}`;
-      const { error } = await supabase.from('users').update({ profile_picture: imageUrl, updated_at: new Date().toISOString() }).eq('id', req.user.id);
-      if (error) throw error;
-      res.json({ message: 'Profile picture updated', profilePicture: imageUrl, profilePictureUrl: config.toPublicUrl(imageUrl) });
-    } catch (err) {
-      sendError(res, err, 'Failed to update profile picture');
-    }
-  });
+  app.use('/api/users', require('./routes/users'));
 
   // ─── PUBLIC: providers ─────────────────────────────────────────────────────
-  const PROVIDER_PUBLIC_FIELDS = 'id, name, profile_picture, rating, review_count, completed_jobs, experience_years, city, service_categories, service_prices, bio, iqama_number, approval_status, created_at';
+  const PROVIDER_PUBLIC_FIELDS = 'id, name, profile_picture, rating, review_count, completed_jobs, experience_years, city, service_areas, is_available, service_categories, service_prices, bio, iqama_number, approval_status, created_at';
   const toPublicProvider = ({ iqama_number, approval_status, ...p }) => ({
     ...p,
     profile_picture: p.profile_picture ? config.toPublicUrl(p.profile_picture) : null,
@@ -183,7 +149,9 @@ function createApp({ enableRateLimit = true } = {}) {
     try {
       const { category, city, minRating, verifiedOnly } = req.query;
       let query = supabase.from('users').select(PROVIDER_PUBLIC_FIELDS).eq('role', 'provider').or('status.is.null,status.neq.suspended').or('approval_status.is.null,approval_status.eq.APPROVED');
-      if (city) query = query.eq('city', String(city));
+      // Providers serve their home city and any extra service areas they chose.
+      const place = city ? normalizeCity(city).replace(/["\\]/g, '') : null;
+      if (place) query = query.or(`city.eq."${place}",service_areas.cs.{"${place}"}`);
       if (minRating && Number.isFinite(Number(minRating))) query = query.gte('rating', Number(minRating));
       if (verifiedOnly === 'true') query = query.not('iqama_number', 'is', null);
       if (category) query = query.contains('service_categories', [String(category)]);
@@ -352,7 +320,7 @@ function attachSockets(io) {
       const latitude = Number(data.latitude);
       const longitude = Number(data.longitude);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return;
-      emitToBooking(io, booking, 'live_location_broadcast', {
+      const payload = {
         bookingId: booking.id,
         senderId: userId,
         senderName: user.name,
@@ -361,12 +329,23 @@ function attachSockets(io) {
         longitude,
         heading: Number.isFinite(Number(data.heading)) ? Number(data.heading) : null,
         timestamp: new Date().toISOString(),
-      });
+      };
+      if (user.role === 'provider') liveLocation.remember(booking.id, payload);
+      emitToBooking(io, booking, 'live_location_broadcast', payload);
     });
     socket.on('location:update', (data) => socket.listeners('update_live_location')[0](data));
     socket.on('stop_live_location', async ({ bookingId } = {}) => {
       const booking = await authorize(socket, bookingId);
-      if (booking) emitToBooking(io, booking, 'location:stopped', { bookingId: booking.id, stoppedBy: userId, reason: 'user' });
+      if (!booking) return;
+      liveLocation.forget(booking.id);
+      emitToBooking(io, booking, 'location:stopped', { bookingId: booking.id, stoppedBy: userId, reason: 'user' });
+    });
+    // The tracking screen asks for the provider's last position when it opens.
+    socket.on('location:get', async ({ bookingId } = {}, ack) => {
+      const booking = await authorize(socket, bookingId, { channel: 'liveLocation' });
+      const last = booking ? liveLocation.lastKnown(booking.id) : null;
+      if (typeof ack === 'function') ack(last);
+      else if (last) socket.emit('location:update', last);
     });
 
     // ─── Calls ────────────────────────────────────────────────────────────────

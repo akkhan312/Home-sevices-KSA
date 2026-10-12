@@ -10,6 +10,7 @@ import { useChatStore, ChatMessage } from '../../../src/store/chatStore';
 import { useSocket } from '../../../src/hooks/useSocket';
 import { API, API_HOST } from '../../../src/config/api';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import * as ImagePicker from 'expo-image-picker';
 import { getCurrentLocation, openMapUrl } from '../../../src/utils/location';
 import { getResponsiveContainerStyle } from '../../../src/theme/responsive';
@@ -20,6 +21,7 @@ import { ImageViewerModal } from '../../../src/components/chat/ImageViewerModal'
 import { ChatSkeleton } from '../../../src/components/chat/ChatSkeleton';
 import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { AudioCallModal, CallState } from '../../../src/components/chat/AudioCallModal';
+import { useFlipStyle } from '../../../src/utils/rtl';
 
 interface CustomerInfo {
   id: string;
@@ -33,6 +35,8 @@ export default function ProviderChatScreen() {
     id: string; customerName?: string;
   }>();
 
+  const { t } = useTranslation();
+  const flip = useFlipStyle();
   const { user } = useAuthStore();
   const { connected, joinRoom, emitEvent, subscribe } = useSocket();
   const {
@@ -86,7 +90,7 @@ export default function ProviderChatScreen() {
         const booking = await bRes.json();
         setCustomerInfo({
           id: booking.customerId,
-          name: booking.customerName || paramCustomerName || 'Customer',
+          name: booking.customerName || paramCustomerName || t('common.customer'),
           phone: booking.customerPhone || '',
           profilePicture: ''
         });
@@ -117,7 +121,7 @@ export default function ProviderChatScreen() {
         markRoomAsRead(bookingId as string);
         emitEvent('mark_read', { bookingId });
       } else if (res.status === 403) {
-        setLockMessage(data?.error || 'Communication is locked until the payment is verified.');
+        setLockMessage(data?.error || t('workflow.errors.locked'));
       }
     } catch {}
     setLoading(false);
@@ -181,7 +185,7 @@ export default function ProviderChatScreen() {
       if (data.bookingId === bookingId) {
         setCallState('idle');
         setShowCallModal(false);
-        Alert.alert('Call Declined', `${customerInfo?.name || 'Customer'} declined the call.`);
+        Alert.alert(t('calls.declined'), t('calls.declinedBody', { name: customerInfo?.name || t('common.customer') }));
       }
     });
 
@@ -208,7 +212,7 @@ export default function ProviderChatScreen() {
   // Voice Call Action Handlers
   const startAudioCall = () => {
     if (!connected) {
-      Alert.alert('Connection Offline', 'Cannot initiate call while offline.');
+      Alert.alert(t('calls.offlineTitle'), t('calls.offlineBody'));
       return;
     }
     setCallState('outgoing');
@@ -287,7 +291,7 @@ export default function ProviderChatScreen() {
         addOrUpdateMessage(bookingId as string, data);
       } else {
         markMessageFailed(bookingId as string, tempId);
-        if (res.status === 403) setLockMessage(data?.error || 'Communication is locked until the payment is verified.');
+        if (res.status === 403) setLockMessage(data?.error || t('workflow.errors.locked'));
       }
     } catch (e) {
       markMessageFailed(bookingId as string, tempId);
@@ -314,7 +318,7 @@ export default function ProviderChatScreen() {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Gallery permission is required.');
+        Alert.alert(t('wizard.details.permissionTitle'), t('wizard.details.permissionBody'));
         return;
       }
 
@@ -345,11 +349,11 @@ export default function ProviderChatScreen() {
           const data = await res.json();
           sendMessagePayload({ image: data.imageUrl, text: '📷 Photo' });
         } else {
-          Alert.alert('Upload Failed', 'Failed to upload image.');
+          Alert.alert(t('common.error'), t('chat.uploadFailed'));
         }
       }
     } catch {
-      Alert.alert('Error', 'An error occurred while uploading image.');
+      Alert.alert(t('common.error'), t('chat.uploadFailed'));
     } finally {
       setUploadingImage(false);
     }
@@ -371,7 +375,7 @@ export default function ProviderChatScreen() {
         }
       });
     } catch {
-      Alert.alert('Location Error', 'Unable to retrieve precise GPS location.');
+      Alert.alert(t('common.error'), t('chat.locationFailed'));
     } finally {
       setSendingLocation(false);
     }
@@ -422,7 +426,7 @@ export default function ProviderChatScreen() {
     );
   };
 
-  const displayName = customerInfo?.name || paramCustomerName || 'Customer';
+  const displayName = customerInfo?.name || paramCustomerName || t('common.customer');
   const isOnline = customerInfo?.id ? (onlineUsers.has(customerInfo.id) || connected) : connected;
 
   return (
@@ -433,7 +437,7 @@ export default function ProviderChatScreen() {
       <View style={styles.header}>
         <View style={[styles.headerContent, getResponsiveContainerStyle()]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color="#fff" style={flip} />
           </TouchableOpacity>
 
           <View style={styles.headerInfo}>
@@ -444,7 +448,7 @@ export default function ProviderChatScreen() {
               <View style={styles.statusRow}>
                 <View style={[styles.statusDot, isOnline ? styles.dotOnline : styles.dotOffline]} />
                 <Text style={styles.statusText}>
-                  {isOtherTyping ? 'typing...' : isOnline ? 'Online' : 'Offline'}
+                  {isOtherTyping ? t('chat.typing') : isOnline ? t('chat.online') : t('chat.offline')}
                 </Text>
                 {customerInfo?.phone ? (
                   <Text style={styles.phoneText}> · 📞 {customerInfo.phone}</Text>
@@ -480,7 +484,7 @@ export default function ProviderChatScreen() {
               ListEmptyComponent={
                 <View style={styles.emptyChat}>
                   <Text style={styles.emptyChatIcon}>💬</Text>
-                  <Text style={styles.emptyChatText}>No messages yet</Text>
+                  <Text style={styles.emptyChatText}>{t('chat.noMessages')}</Text>
                   <Text style={styles.emptyChatSub}>Communicate instantly with {displayName}!</Text>
                 </View>
               }
@@ -532,7 +536,7 @@ export default function ProviderChatScreen() {
               style={styles.input}
               value={text}
               onChangeText={handleTextChange}
-              placeholder="Type a message..."
+              placeholder={t('chat.typeMessage')}
               placeholderTextColor="#94A3B8"
               multiline
               maxLength={500}

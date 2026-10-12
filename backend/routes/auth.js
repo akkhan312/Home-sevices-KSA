@@ -9,6 +9,7 @@ const supabase = require('../supabase');
 const { mapUserToFrontend } = require('../utils/mappers');
 const { JWT_SECRET, isProduction } = require('../config');
 const { signSessionToken } = require('../middleware/auth');
+const { isServiceCategory, normalizeCity } = require('../services/catalog');
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
@@ -97,6 +98,10 @@ router.post('/signup', authLimiter, async (req, res) => {
     if (role === 'provider' && !iqamaNumber) {
       return res.status(400).json({ error: 'Iqama number is required for providers' });
     }
+    const iban = String(req.body.iban || '').replace(/\s+/g, '').toUpperCase();
+    if (role === 'provider' && iban && !/^SA\d{22}$/.test(iban)) {
+      return res.status(400).json({ error: 'IBAN must be a valid Saudi IBAN (SA followed by 22 digits)' });
+    }
 
     const { data: existingUser } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
     if (existingUser) return res.status(400).json({ error: 'Email already exists' });
@@ -114,8 +119,14 @@ router.post('/signup', authLimiter, async (req, res) => {
     if (role === 'provider') {
       // New providers must be approved by an admin before they receive requests (set REQUIRE_PROVIDER_APPROVAL=false to skip).
       insert.approval_status = process.env.REQUIRE_PROVIDER_APPROVAL === 'false' ? 'APPROVED' : 'PENDING';
-      if (city) insert.city = String(city);
-      if (Array.isArray(serviceCategories)) insert.service_categories = serviceCategories.map(String);
+      if (city) insert.city = normalizeCity(city);
+      if (Array.isArray(serviceCategories)) insert.service_categories = [...new Set(serviceCategories.map(String))].filter(isServiceCategory);
+      // Payout account used by admins to transfer the provider's earnings.
+      if (iban) {
+        insert.payout_iban = iban;
+        insert.payout_account_holder = String(req.body.accountHolder || name).trim().slice(0, 120);
+        if (req.body.bankName) insert.payout_bank_name = String(req.body.bankName).trim().slice(0, 120);
+      }
     }
 
     const { data: user, error } = await supabase.from('users').insert(insert).select().single();

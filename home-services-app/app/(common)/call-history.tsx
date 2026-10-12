@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API } from '../../src/config/api';
+import { useTranslation } from 'react-i18next';
+import { toAbsoluteUrl } from '../../src/config/api';
+import { apiFetch } from '../../src/services/apiClient';
 import { webrtcManager } from '../../src/services/webrtcService';
+import { useAuthStore } from '../../src/store/authStore';
+import { BackButton } from '../../src/components/ui/BackButton';
 
 interface CallRecord {
   id: string;
@@ -17,6 +20,8 @@ interface CallRecord {
 }
 
 export default function CallHistoryScreen() {
+  const { t, i18n } = useTranslation();
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<CallRecord[]>([]);
 
@@ -27,11 +32,7 @@ export default function CallHistoryScreen() {
   const fetchCallHistory = async () => {
     try {
       setLoading(true);
-      const token = (await AsyncStorage.getItem('jwt_token')) || (await AsyncStorage.getItem('userToken'));
-      const res = await fetch(`${API}/calls/history`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
+      const data = await apiFetch<CallRecord[]>('/calls/history');
       if (Array.isArray(data)) {
         setHistory(data);
       }
@@ -46,8 +47,8 @@ export default function CallHistoryScreen() {
     if (item.bookingId) {
       webrtcManager.startCall({
         bookingId: item.bookingId,
-        callerName: 'Me',
-        serviceName: 'Home Service Call'
+        callerName: user?.name || '',
+        serviceName: t('calls.homeService')
       });
     }
   };
@@ -68,17 +69,19 @@ export default function CallHistoryScreen() {
   };
 
   const formatDuration = (secs: number) => {
-    if (!secs) return '0s';
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    const m = Math.floor((secs || 0) / 60);
+    const s = (secs || 0) % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Call Logs & History</Text>
-        <Text style={styles.subtitle}>Recent voice communication records</Text>
+      <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+        <BackButton />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>{t('calls.history')}</Text>
+          <Text style={styles.subtitle}>{t('calls.historySub')}</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -92,7 +95,7 @@ export default function CallHistoryScreen() {
             <View style={styles.card}>
               <View style={styles.avatarBox}>
                 {item.otherUserProfilePicture ? (
-                  <Image source={{ uri: item.otherUserProfilePicture }} style={styles.avatar} />
+                  <Image source={{ uri: toAbsoluteUrl(item.otherUserProfilePicture) }} style={styles.avatar} />
                 ) : (
                   <Ionicons name="person" size={20} color="#94A3B8" />
                 )}
@@ -103,10 +106,10 @@ export default function CallHistoryScreen() {
                 <View style={styles.typeRow}>
                   {renderCallIcon(item.callType)}
                   <Text style={styles.callTypeLabel}>
-                    {item.callType.toUpperCase()} • {formatDuration(item.durationSeconds)}
+                    {t(`calls.types.${item.callType}`, { defaultValue: item.callType })} • {formatDuration(item.durationSeconds)}
                   </Text>
                 </View>
-                <Text style={styles.dateText}>{new Date(item.createdAt).toLocaleString()}</Text>
+                <Text style={styles.dateText}>{new Date(item.createdAt).toLocaleString(i18n.language === 'ar' ? 'ar-SA' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</Text>
               </View>
 
               <TouchableOpacity style={styles.callBackBtn} onPress={() => handleCallBack(item)}>
@@ -117,7 +120,7 @@ export default function CallHistoryScreen() {
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons name="call-outline" size={48} color="#475569" />
-              <Text style={styles.emptyText}>No recent call history</Text>
+              <Text style={styles.emptyText}>{t('calls.noHistory')}</Text>
             </View>
           }
         />

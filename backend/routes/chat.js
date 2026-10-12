@@ -8,6 +8,7 @@ const { toPublicUrl } = require('../config');
 const { privatePathFor, fileUrl } = require('../services/files');
 const { getParticipantBooking, emitToBooking, sendError, HttpError, assertCommunication, communicationFor } = require('../services/access');
 const { saveMessage } = require('../services/chatService');
+const { registerToken, isValidPushToken } = require('../services/pushService');
 
 router.use(authenticate);
 
@@ -48,6 +49,7 @@ router.get('/conversations', async (req, res) => {
 
         return {
           bookingId: b.id,
+          category: b.category,
           categoryName: b.category_name,
           bookingStatus: b.status,
           otherUser: {
@@ -139,17 +141,12 @@ router.post('/pin/:bookingId', async (req, res) => {
   }
 });
 
-// ─── POST /api/chat/push-token — Save user push token ────────────────────────
+// ─── POST /api/chat/push-token — legacy alias of POST /api/users/me/push-token ─
 router.post('/push-token', async (req, res) => {
   try {
     const { token, platform } = req.body;
-    if (!token) return res.status(400).json({ error: 'Token is required' });
-
-    const { error } = await supabase
-      .from('user_push_tokens')
-      .upsert({ user_id: req.user.id, expo_push_token: token, platform: platform || 'expo', updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-    if (error) throw error;
-
+    if (!isValidPushToken(token)) return res.status(400).json({ error: 'A valid Expo push token is required' });
+    await registerToken(req.user.id, token, platform);
     res.json({ message: 'Push token saved successfully' });
   } catch (err) {
     sendError(res, err, 'Failed to save push token');

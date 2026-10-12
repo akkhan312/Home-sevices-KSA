@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal, View, Image, StyleSheet, TouchableOpacity, Text, SafeAreaView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 
 interface ImageViewerModalProps {
   visible: boolean;
@@ -9,6 +10,7 @@ interface ImageViewerModalProps {
 }
 
 export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ visible, imageUrl, onClose }) => {
+  const { t } = useTranslation();
   if (!imageUrl) return null;
 
   return (
@@ -18,7 +20,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ visible, ima
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
             <Ionicons name="close" size={26} color="#F8FAFC" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Photo</Text>
+          <Text style={styles.headerTitle}>{t('chat.photo')}</Text>
           <View style={{ width: 40 }} />
         </View>
 

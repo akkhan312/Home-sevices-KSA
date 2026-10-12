@@ -138,30 +138,39 @@ async function listPayouts({ status = 'PENDING', providerId } = {}) {
   const providerIds = [...new Set(payouts.map((p) => p.provider_id))];
   const [{ data: bookings }, { data: providers }] = await Promise.all([
     supabase.from('bookings').select('id, order_number, category_name, customer_name, status').in('id', bookingIds),
-    supabase.from('users').select('id, name').in('id', providerIds),
+    supabase.from('users').select('id, name, phone, payout_bank_name, payout_iban, payout_account_holder').in('id', providerIds),
   ]);
   const bById = new Map((bookings || []).map((b) => [b.id, b]));
   const pById = new Map((providers || []).map((p) => [p.id, p]));
 
-  return payouts.map((p) => ({
-    id: p.id,
-    bookingId: p.booking_id,
-    orderNumber: bById.get(p.booking_id)?.order_number || null,
-    serviceName: bById.get(p.booking_id)?.category_name || '',
-    customerName: bById.get(p.booking_id)?.customer_name || '',
-    bookingStatus: bById.get(p.booking_id)?.status || null,
-    providerId: p.provider_id,
-    providerName: pById.get(p.provider_id)?.name || 'Provider',
-    customerPayment: Number(p.customer_payment),
-    commission: Number(p.commission),
-    commissionRate: p.commission_rate !== null && p.commission_rate !== undefined ? Number(p.commission_rate) : null,
-    amount: Number(p.amount),
-    currency: p.currency || 'SAR',
-    status: p.status,
-    externalReference: p.external_reference || null,
-    paidAt: p.paid_at || null,
-    createdAt: p.created_at,
-  }));
+  return payouts.map((p) => {
+    const booking = bById.get(p.booking_id) || {};
+    const provider = pById.get(p.provider_id) || {};
+    return {
+      id: p.id,
+      bookingId: p.booking_id,
+      orderNumber: booking.order_number || null,
+      serviceName: booking.category_name || '',
+      customerName: booking.customer_name || '',
+      bookingStatus: booking.status || null,
+      providerId: p.provider_id,
+      providerName: provider.name || 'Provider',
+      providerPhone: provider.phone || '',
+      // Where the admin sends the money. Null until the provider saves payout bank details.
+      providerBank: provider.payout_iban
+        ? { bankName: provider.payout_bank_name || '', iban: provider.payout_iban, accountHolder: provider.payout_account_holder || provider.name || '' }
+        : null,
+      customerPayment: Number(p.customer_payment),
+      commission: Number(p.commission),
+      commissionRate: p.commission_rate !== null && p.commission_rate !== undefined ? Number(p.commission_rate) : null,
+      amount: Number(p.amount),
+      currency: p.currency || 'SAR',
+      status: p.status,
+      externalReference: p.external_reference || null,
+      paidAt: p.paid_at || null,
+      createdAt: p.created_at,
+    };
+  });
 }
 
 /** Provider dashboard numbers, all derived from server-side records. */
@@ -187,9 +196,14 @@ async function resolveDispute({ bookingId, admin, resolution, note, io }) {
   if (!booking) throw new HttpError(404, 'Booking not found');
   if (booking.status !== 'disputed') throw new HttpError(400, 'This order is not disputed.');
 
+  const closeReports = (notes) =>
+    supabase.from('reports').update({ status: 'resolved', resolved_at: nowIso(), resolution_notes: notes }).eq('booking_id', bookingId).eq('status', 'open');
+
   if (resolution === 'refund') {
     const { refundPayment } = require('./paymentService');
-    return refundPayment({ bookingId, admin, reason: note || 'Dispute resolved in favour of the customer', io });
+    const result = await refundPayment({ bookingId, admin, reason: note || 'Dispute resolved in favour of the customer', io });
+    await closeReports(`Refunded to customer. ${note || ''}`.trim());
+    return result;
   }
   if (resolution !== 'release') throw new HttpError(400, 'Resolution must be "release" or "refund".');
   if (booking.payment_status !== PAYMENT.PAID) throw new HttpError(400, 'Unpaid orders cannot be released.');
@@ -206,6 +220,10 @@ async function resolveDispute({ bookingId, admin, resolution, note, io }) {
   await ensurePendingPayout(updated);
   await logStatus(bookingId, 'CUSTOMER_CONFIRMED', admin.id, `Dispute resolved: release. ${note || ''}`);
   await audit(admin, 'DISPUTE_RELEASED', 'booking', bookingId, note || 'Released to provider');
+  await closeReports(`Released to provider. ${note || ''}`.trim());
+  const outcome = note ? ` Note: ${note}` : '';
+  await notifyUser(updated.customer_id, '⚖️ Dispute resolved', `ServeHome reviewed order ${updated.order_number || ''} and released payment to the provider.${outcome}`, { type: 'dispute_resolved', data: { bookingId } });
+  await notifyUser(updated.provider_id, '⚖️ Dispute resolved', `Order ${updated.order_number || ''} was resolved in your favour. Your payout of SAR ${updated.provider_earnings} is pending.`, { type: 'dispute_resolved', data: { bookingId } });
   emitToBooking(io, updated, 'booking_updated', mapBookingToFrontend(updated), { includeAdmins: true });
   return { success: true, message: 'Dispute resolved. Provider payout is now pending.' };
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { I18nManager } from 'react-native';
+import { Alert, I18nManager, Platform } from 'react-native';
 import i18n from '../i18n';
 
 type Language = 'en' | 'ar';
@@ -22,7 +22,27 @@ interface SettingsState {
 const getStorage = () =>
   require('@react-native-async-storage/async-storage').default;
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
+/** Applies the layout direction. Web flips immediately; native apps flip on the next launch. */
+function applyDirection(lang: Language) {
+  const isRTL = lang === 'ar';
+  if (Platform.OS === 'web') {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dir = isRTL ? 'rtl' : 'ltr';
+      document.documentElement.lang = lang;
+    }
+    return false;
+  }
+  const changed = I18nManager.isRTL !== isRTL;
+  try {
+    I18nManager.allowRTL(isRTL);
+    I18nManager.forceRTL(isRTL);
+  } catch (e) {
+    console.warn('I18nManager forceRTL warning:', e);
+  }
+  return changed;
+}
+
+export const useSettingsStore = create<SettingsState>((set) => ({
   language: 'en',
   isRTL: false,
   darkMode: false,
@@ -32,16 +52,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setLanguage: async (lang) => {
     const AS = getStorage();
-    const isRTL = lang === 'ar';
     await AS.setItem('app_language', lang);
-    i18n.changeLanguage(lang);
-    try {
-      I18nManager.allowRTL(isRTL);
-      I18nManager.forceRTL(isRTL);
-    } catch (e) {
-      console.warn('I18nManager forceRTL warning:', e);
-    }
-    set({ language: lang, isRTL });
+    await i18n.changeLanguage(lang);
+    const needsRestart = applyDirection(lang);
+    set({ language: lang, isRTL: lang === 'ar' });
+    if (needsRestart) Alert.alert(i18n.t('language.restartTitle'), i18n.t('language.restartBody'));
   },
 
   setDarkMode: (dark) => {
@@ -69,20 +84,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         AS.getItem('language_selected'),
       ]);
 
-      const language = (lang as Language) || 'en';
-      const isRTL = language === 'ar';
-
-      // Apply language
-      i18n.changeLanguage(language);
-      try {
-        I18nManager.allowRTL(isRTL);
-      } catch (e) {
-        console.warn('I18nManager allowRTL warning:', e);
-      }
+      const language: Language = lang === 'ar' ? 'ar' : 'en';
+      await i18n.changeLanguage(language);
+      applyDirection(language);
 
       set({
         language,
-        isRTL,
+        isRTL: language === 'ar',
         darkMode: dark === '1',
         onboardingSeen: onboarding === '1',
         languageSelected: langSelected === '1',

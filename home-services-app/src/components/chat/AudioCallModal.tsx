@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, SafeAreaView, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { CachedImage } from '../ui/CachedImage';
 import { Colors, Typography, Spacing, Radius } from '../../theme';
 
@@ -72,6 +73,7 @@ export function AudioCallModal({
     onEndCall(callDuration);
   };
 
+  const { t } = useTranslation();
   if (!visible || callState === 'idle') return null;
 
   return (
@@ -79,7 +81,7 @@ export function AudioCallModal({
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <Ionicons name="shield-checkmark" size={16} color="#10B981" />
-          <Text style={styles.headerText}>End-to-End Encrypted Voice Call</Text>
+          <Text style={styles.headerText}>{t('calls.encrypted')}</Text>
         </View>
 
         {/* Counterpart Info & Avatar */}
@@ -90,12 +92,12 @@ export function AudioCallModal({
           <Text style={styles.counterpartName}>{counterpartName}</Text>
           <Text style={styles.callStatusText}>
             {callState === 'outgoing'
-              ? 'Ringing...'
+              ? t('calls.ringing')
               : callState === 'incoming'
-              ? 'Incoming Voice Call'
+              ? t('calls.incoming')
               : callState === 'connected'
               ? formatDuration(callDuration)
-              : 'Call Ended'}
+              : t('calls.ended')}
           </Text>
         </View>
 

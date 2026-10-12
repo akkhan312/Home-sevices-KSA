@@ -4,7 +4,8 @@ import {
   ActivityIndicator, Alert, Platform, SafeAreaView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { API } from '../config/api';
+import { useTranslation } from 'react-i18next';
+import { apiFetch } from '../services/apiClient';
 
 interface ReportModalProps {
   visible: boolean;
@@ -15,14 +16,7 @@ interface ReportModalProps {
   onSuccess?: () => void;
 }
 
-const REPORT_REASONS = [
-  'Unprofessional behavior',
-  'Did not show up / Delayed',
-  'Overcharging or price conflict',
-  'Poor quality of work',
-  'Fraudulent / Fake verification',
-  'Other objection'
-];
+const REPORT_REASONS = ['unprofessional', 'noShow', 'overcharging', 'poorQuality', 'fraud', 'other'];
 
 export function ReportModal({
   visible,
@@ -32,56 +26,25 @@ export function ReportModal({
   bookingId,
   onSuccess
 }: ReportModalProps) {
+  const { t } = useTranslation();
   const [selectedReason, setSelectedReason] = useState(REPORT_REASONS[0]);
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const getToken = async () => {
-    try {
-      return await require('@react-native-async-storage/async-storage').default.getItem('jwt_token');
-    } catch {
-      return null;
-    }
-  };
-
   const handleSubmitReport = async () => {
-    if (!selectedReason) {
-      Alert.alert('Selection Required', 'Please select a reason for your report.');
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API}/reports`, {
+      // Admins read reports in English; the reporter sees the reason in their own language.
+      await apiFetch('/reports', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          targetUserId,
-          bookingId: bookingId || null,
-          reason: selectedReason,
-          description: description.trim()
-        })
+        body: { targetUserId, bookingId: bookingId || null, reason: t(`reportModal.reasons.${selectedReason}`, { lng: 'en' }), description: description.trim() },
       });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        Alert.alert(
-          'Objection Filed',
-          'Your report has been submitted to Admin. Admin will investigate and verify the legitimacy of this objection.'
-        );
-        setDescription('');
-        onClose();
-        if (onSuccess) onSuccess();
-      } else {
-        Alert.alert('Error', data.error || 'Failed to submit report.');
-      }
-    } catch (err) {
-      Alert.alert('Error', 'An error occurred while submitting report.');
+      Alert.alert(t('reportModal.sentTitle'), t('reportModal.sentBody'));
+      setDescription('');
+      onClose();
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err.message);
     } finally {
       setSubmitting(false);
     }
@@ -94,18 +57,16 @@ export function ReportModal({
           <View style={styles.header}>
             <View style={styles.headerTitleRow}>
               <Ionicons name="warning-outline" size={24} color="#EF4444" />
-              <Text style={styles.title}>File Objection / Report</Text>
+              <Text style={styles.title}>{t('reportModal.title')}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Ionicons name="close" size={20} color="#64748B" />
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.subTitle}>
-            Report <Text style={{ fontWeight: '800', color: '#0F172A' }}>{targetUserName}</Text> to platform admin for review & verification.
-          </Text>
+          <Text style={styles.subTitle}>{t('reportModal.subtitle', { name: targetUserName })}</Text>
 
-          <Text style={styles.label}>Select Reason:</Text>
+          <Text style={styles.label}>{t('reportModal.reason')}</Text>
           {REPORT_REASONS.map((reason) => (
             <TouchableOpacity
               key={reason}
@@ -118,15 +79,15 @@ export function ReportModal({
                 color={selectedReason === reason ? '#EF4444' : '#64748B'}
               />
               <Text style={[styles.reasonText, selectedReason === reason && styles.reasonTextActive]}>
-                {reason}
+                {t(`reportModal.reasons.${reason}`)}
               </Text>
             </TouchableOpacity>
           ))}
 
-          <Text style={[styles.label, { marginTop: 14 }]}>Additional Explanation (Optional):</Text>
+          <Text style={[styles.label, { marginTop: 14 }]}>{t('reportModal.details')}</Text>
           <TextInput
             style={styles.textInput}
-            placeholder="Describe what happened in detail for admin verification..."
+            placeholder={t('reportModal.placeholder')}
             placeholderTextColor="#94A3B8"
             multiline
             numberOfLines={3}
@@ -136,7 +97,7 @@ export function ReportModal({
 
           <View style={styles.actionsRow}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={submitting}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
+              <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.submitBtn} onPress={handleSubmitReport} disabled={submitting}>
@@ -145,7 +106,7 @@ export function ReportModal({
               ) : (
                 <>
                   <Ionicons name="paper-plane-outline" size={16} color="#fff" />
-                  <Text style={styles.submitBtnText}>Submit to Admin</Text>
+                  <Text style={styles.submitBtnText}>{t('reportModal.submit')}</Text>
                 </>
               )}
             </TouchableOpacity>

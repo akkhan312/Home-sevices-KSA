@@ -1,4 +1,5 @@
 const supabase = require('../supabase');
+const { queuePush } = require('./pushService');
 
 // Statuses in which a booking is still open to proposals from any provider.
 const OPEN_STATUSES = ['pending', 'OPEN', 'BIDDING'];
@@ -115,6 +116,7 @@ function redactForViewer(mappedBooking, booking, user) {
 // Modern namespaced event names emitted alongside the legacy names the current app listens to.
 const EVENT_ALIASES = {
   new_offer: 'proposal:new',
+  offer_withdrawn: 'proposal:withdrawn',
   offer_accepted: 'proposal:selected',
   booking_updated: 'order:updated',
   payment_pending: 'payment:submitted',
@@ -138,6 +140,15 @@ function emitWithAlias(target, event, payload) {
   if (EVENT_ALIASES[event]) target.emit(EVENT_ALIASES[event], payload);
 }
 
+/**
+ * Booking rooms include every provider who opened the request while it was collecting proposals, so broadcast order
+ * snapshots never carry the exact address, coordinates, phone or receipt. Clients re-fetch their own (redacted) view.
+ */
+function redactForBroadcast(payload) {
+  if (!payload || typeof payload !== 'object' || !('customerId' in payload) || !('address' in payload)) return payload;
+  return { ...payload, address: payload.area || payload.city || '', addressHidden: true, customerPhone: '', latitude: null, longitude: null, paymentSlip: '' };
+}
+
 /** Emits to the booking room plus each participant's personal room and optionally admins (deduplicated by Socket.IO). */
 function emitToBooking(io, booking, event, payload, { includeAdmins = false } = {}) {
   if (!io || !booking) return;
@@ -145,7 +156,7 @@ function emitToBooking(io, booking, event, payload, { includeAdmins = false } = 
   if (booking.customer_id) rooms.push(`user:${booking.customer_id}`);
   if (booking.provider_id) rooms.push(`user:${booking.provider_id}`);
   if (includeAdmins) rooms.push('role:admin');
-  emitWithAlias(io.to(rooms), event, payload);
+  emitWithAlias(io.to(rooms), event, redactForBroadcast(payload));
 }
 
 function emitToUser(io, userId, event, payload) {
@@ -156,16 +167,30 @@ function emitToRole(io, role, event, payload) {
   if (io) emitWithAlias(io.to(`role:${role}`), event, payload);
 }
 
+/** Push payload data the app uses to open the right screen when a notification is tapped. */
+const pushData = (type, data) => ({ type: type || null, ...(data || {}) });
+
 async function notifyAdmins(rows) {
   const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin');
   if (!admins || admins.length === 0) return;
   await supabase.from('notifications').insert(admins.map((a) => ({ user_id: a.id, read: false, ...rows })));
+  queuePush(admins.map((a) => a.id), { title: rows.title, body: rows.body, data: pushData(rows.type, rows.data) });
 }
 
 async function notifyUser(userId, title, body, extra = {}) {
   if (!userId) return;
   const { error } = await supabase.from('notifications').insert({ user_id: userId, title, body, read: false, ...extra });
   if (error) console.warn('Notification insert failed:', error.message);
+  queuePush([userId], { title, body, data: pushData(extra.type, extra.data) });
+}
+
+/** Same notification for many users (e.g. a new request for every matching provider). */
+async function notifyUsers(userIds, title, body, extra = {}) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const { error } = await supabase.from('notifications').insert(ids.map((id) => ({ user_id: id, title, body, read: false, ...extra })));
+  if (error) console.warn('Notification insert failed:', error.message);
+  queuePush(ids, { title, body, data: pushData(extra.type, extra.data) });
 }
 
 async function logStatus(bookingId, status, userId, note) {
@@ -199,6 +224,7 @@ module.exports = {
   emitToRole,
   notifyAdmins,
   notifyUser,
+  notifyUsers,
   logStatus,
   sendError,
 };

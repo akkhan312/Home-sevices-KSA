@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 
 interface ProviderOfferModalProps {
   visible: boolean;
@@ -23,10 +24,11 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
   existingOffer,
   onSubmitOffer
 }) => {
+  const { t } = useTranslation();
   const [price, setPrice] = useState(existingOffer ? String(existingOffer.price) : String(initialBudget));
   const [etaMinutes, setEtaMinutes] = useState(existingOffer ? String(existingOffer.etaMinutes) : '20');
   const [completionHours, setCompletionHours] = useState(existingOffer ? String(existingOffer.completionHours) : '1.5');
-  const [message, setMessage] = useState(existingOffer ? existingOffer.message : 'I can handle this service cleanly today.');
+  const [message, setMessage] = useState(existingOffer ? existingOffer.message : '');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
@@ -35,11 +37,11 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
     const numericDuration = parseFloat(completionHours);
 
     if (isNaN(numericPrice) || numericPrice <= 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid offer price in SAR.');
+      Alert.alert(t('offerModal.invalidPrice'), t('offerModal.invalidPriceBody'));
       return;
     }
     if (isNaN(numericEta) || numericEta <= 0) {
-      Alert.alert('Invalid ETA', 'Please enter a valid arrival time in minutes.');
+      Alert.alert(t('offerModal.invalidEta'), t('offerModal.invalidEtaBody'));
       return;
     }
 
@@ -53,7 +55,7 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
       });
       onClose();
     } catch (err: any) {
-      Alert.alert('Offer Error', err.message || 'Failed to submit offer.');
+      Alert.alert(t('common.error'), err.message || t('workflow.errors.generic'));
     } finally {
       setLoading(false);
     }
@@ -66,8 +68,8 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>{existingOffer ? 'Edit Your Offer ✏️' : 'Send Bidding Offer 🏷️'}</Text>
-              <Text style={styles.subtitle}>Customer Budget: SAR {initialBudget}</Text>
+              <Text style={styles.title}>{existingOffer ? t('offerModal.editTitle') : t('offerModal.title')}</Text>
+              <Text style={styles.subtitle}>{t('offerModal.budget', { amount: initialBudget })}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Ionicons name="close" size={24} color="#94A3B8" />
@@ -76,25 +78,25 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
 
           {/* Form */}
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Your Price Offer (SAR)</Text>
+            <Text style={styles.label}>{t('offerModal.price')}</Text>
             <View style={styles.inputWrap}>
-              <Text style={styles.currency}>SAR</Text>
+              <Text style={styles.currency}>{t('common.sarSymbol')}</Text>
               <TextInput
                 style={styles.input}
                 value={price}
                 onChangeText={setPrice}
                 keyboardType="numeric"
-                placeholder="e.g. 140"
+                placeholder="140"
                 placeholderTextColor="#64748B"
               />
             </View>
           </View>
 
           <View style={styles.row}>
-            <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>ETA (Minutes)</Text>
+            <View style={[styles.formGroup, { flex: 1, marginEnd: 8 }]}>
+              <Text style={styles.label}>{t('offerModal.eta')}</Text>
               <View style={styles.inputWrap}>
-                <Ionicons name="time-outline" size={18} color="#94A3B8" style={{ marginRight: 6 }} />
+                <Ionicons name="time-outline" size={18} color="#94A3B8" style={{ marginEnd: 6 }} />
                 <TextInput
                   style={styles.input}
                   value={etaMinutes}
@@ -106,10 +108,10 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
               </View>
             </View>
 
-            <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Est. Duration (Hrs)</Text>
+            <View style={[styles.formGroup, { flex: 1, marginStart: 8 }]}>
+              <Text style={styles.label}>{t('offerModal.duration')}</Text>
               <View style={styles.inputWrap}>
-                <Ionicons name="hourglass-outline" size={18} color="#94A3B8" style={{ marginRight: 6 }} />
+                <Ionicons name="hourglass-outline" size={18} color="#94A3B8" style={{ marginEnd: 6 }} />
                 <TextInput
                   style={styles.input}
                   value={completionHours}
@@ -123,14 +125,14 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Message to Customer</Text>
+            <Text style={styles.label}>{t('offerModal.message')}</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={message}
               onChangeText={setMessage}
               multiline
               numberOfLines={3}
-              placeholder="Explain your tools, experience or availability..."
+              placeholder={t('offerModal.messagePlaceholder')}
               placeholderTextColor="#64748B"
             />
           </View>
@@ -142,8 +144,8 @@ export const ProviderOfferModal: React.FC<ProviderOfferModalProps> = ({
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="paper-plane" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.submitBtnText}>{existingOffer ? 'Update Offer' : 'Submit Offer'}</Text>
+                  <Ionicons name="paper-plane" size={18} color="#FFFFFF" style={{ marginEnd: 8 }} />
+                  <Text style={styles.submitBtnText}>{existingOffer ? t('offerModal.update') : t('offerModal.submit')}</Text>
                 </>
               )}
             </LinearGradient>

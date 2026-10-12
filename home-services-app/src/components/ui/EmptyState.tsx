@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, Radius } from '../../theme';
+import { useFlipStyle } from '../../utils/rtl';
 
 type IllustrationType = 'empty-box' | 'no-wifi' | 'no-results' | 'no-bookings' | 'no-notifications' | 'no-favorites' | 'success' | 'error';
 
@@ -31,6 +32,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   actionLabel,
   onAction,
 }) => {
+  const flip = useFlipStyle();
   const config = ILLUSTRATION_CONFIG[type];
 
   return (
@@ -52,7 +54,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       {actionLabel && onAction && (
         <TouchableOpacity style={styles.actionBtn} onPress={onAction} activeOpacity={0.85}>
           <Text style={styles.actionText}>{actionLabel}</Text>
-          <Ionicons name="arrow-forward" size={16} color={Colors.accent} />
+          <Ionicons name="arrow-forward" size={16} color={Colors.accent} style={flip} />
         </TouchableOpacity>
       )}
     </View>

@@ -5,11 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  Clipboard,
   Alert,
   Modal,
   SafeAreaView
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { ChatMessage } from '../../store/chatStore';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer';
@@ -35,12 +36,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onDeletePress,
   onReactPress
 }) => {
+  const { t } = useTranslation();
   const [showMenu, setShowMenu] = useState(false);
 
   const handleCopy = () => {
     if (message.text) {
-      Clipboard.setString(message.text);
-      Alert.alert('Copied', 'Message text copied to clipboard.');
+      Clipboard.setStringAsync(message.text);
+      Alert.alert(t('workflow.payment.copied'));
     }
     setShowMenu(false);
   };
@@ -110,7 +112,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           <TouchableOpacity style={styles.docBox}>
             <Ionicons name="document-text-outline" size={24} color={isSelf ? '#FFFFFF' : '#2563EB'} />
             <Text style={[styles.docName, isSelf ? styles.textSelf : styles.textOther]} numberOfLines={1}>
-              {message.documentName || 'Attachment Document'}
+              {message.documentName || t('chat.document')}
             </Text>
           </TouchableOpacity>
         )}
@@ -120,7 +122,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           <View style={styles.locationCard}>
             <Ionicons name="location" size={18} color="#EF4444" />
             <Text style={styles.locationText} numberOfLines={1}>
-              {message.location.placeName || 'Shared Location'}
+              {message.location.placeName || t('chat.sharedLocation')}
             </Text>
           </View>
         )}
@@ -174,13 +176,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 }}
               >
                 <Ionicons name="arrow-undo-outline" size={18} color="#0F172A" />
-                <Text style={styles.menuOptionText}>Reply</Text>
+                <Text style={styles.menuOptionText}>{t('chat.reply')}</Text>
               </TouchableOpacity>
 
               {Boolean(message.text) && (
                 <TouchableOpacity style={styles.menuOption} onPress={handleCopy}>
                   <Ionicons name="copy-outline" size={18} color="#0F172A" />
-                  <Text style={styles.menuOptionText}>Copy Text</Text>
+                  <Text style={styles.menuOptionText}>{t('chat.copy')}</Text>
                 </TouchableOpacity>
               )}
 
@@ -193,7 +195,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   }}
                 >
                   <Ionicons name="trash-outline" size={18} color="#EF4444" />
-                  <Text style={[styles.menuOptionText, { color: '#EF4444' }]}>Delete for Everyone</Text>
+                  <Text style={[styles.menuOptionText, { color: '#EF4444' }]}>{t('chat.deleteForEveryone')}</Text>
                 </TouchableOpacity>
               )}
             </View>

@@ -1,336 +1,453 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView,
-  StatusBar, TextInput, Alert, ActivityIndicator, Platform
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, StatusBar, TextInput, Alert,
+  ActivityIndicator, Image, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../../../src/store/authStore';
-import { API } from '../../../src/config/api';
+import { apiFetch, appendFile } from '../../../src/services/apiClient';
 import { StepIndicator } from '../../../src/components/ui/StepIndicator';
+import { BackButton } from '../../../src/components/ui/BackButton';
+import { CityPicker } from '../../../src/components/ui/CityPicker';
+import { LocationPicker, Coords } from '../../../src/components/map/LocationPicker';
+import { SERVICES, getService, cityLabel, ServiceId } from '../../../src/constants/catalog';
+import { getCurrentLocation, reverseGeocode } from '../../../src/utils/location';
+import { useFlipStyle } from '../../../src/utils/rtl';
+import { Colors } from '../../../src/theme';
 
-const SERVICES: Record<string, { name: string; iconName: keyof typeof import('@expo/vector-icons').Ionicons.glyphMap; options: { label: string; price: number }[] }> = {
-  cleaning:    { name: 'Cleaning',     iconName: 'water-outline',         options: [{ label: 'Studio / 1BR', price: 80 }, { label: '2BR Apartment', price: 120 }, { label: '3BR Apartment', price: 160 }, { label: 'Villa', price: 250 }] },
-  plumbing:    { name: 'Plumbing',     iconName: 'construct-outline',      options: [{ label: 'Pipe Repair', price: 100 }, { label: 'Leak Fix', price: 120 }, { label: 'Installation', price: 180 }] },
-  ac:          { name: 'AC Repair',    iconName: 'thermometer-outline',    options: [{ label: 'Service & Clean', price: 150 }, { label: 'Gas Refill', price: 200 }, { label: 'Full Repair', price: 350 }] },
-  electrical:  { name: 'Electrician', iconName: 'flash-outline',          options: [{ label: 'Switch / Socket', price: 80 }, { label: 'Wiring', price: 200 }, { label: 'Circuit Breaker', price: 150 }] },
-  painting:    { name: 'Painting',     iconName: 'color-palette-outline',  options: [{ label: 'One Room', price: 200 }, { label: 'Full Apartment', price: 600 }, { label: 'Villa', price: 1200 }] },
-  maintenance: { name: 'Maintenance',  iconName: 'settings-outline',       options: [{ label: 'General Fix', price: 90 }, { label: 'Carpentry', price: 150 }, { label: 'Full Inspection', price: 250 }] },
-};
+const MAX_PHOTOS = 4;
+const TIME_SLOTS = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
+const STEP_COUNT = 5;
 
-const TIMES = ['08:00', '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+type Photo = { uri: string; mimeType?: string | null; fileName?: string | null };
 
-export default function CreateBooking() {
-  const { category, categoryName } = useLocalSearchParams<{ category: string; categoryName: string }>();
+/** Local calendar date as YYYY-MM-DD (the date the customer sees, not UTC). */
+const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+export default function RequestWizard() {
+  const { category } = useLocalSearchParams<{ category?: string }>();
+  const { t, i18n } = useTranslation();
   const { user } = useAuthStore();
-  // Fall back to cleaning when opened without a category, and send the category that is actually shown.
-  const categoryKey = SERVICES[category as string] ? (category as string) : 'cleaning';
-  const service = SERVICES[categoryKey];
+  const flip = useFlipStyle();
 
-  const [selectedOption, setSelectedOption] = useState(0);
-  const [selectedDate, setSelectedDate] = useState('');
-  const [selectedTime, setSelectedTime] = useState('');
-  const [address, setAddress] = useState('');
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-    const [paymentMethod, setPaymentMethod] = useState('card');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCVV, setCardCVV] = useState('');
+  const [step, setStep] = useState(1);
+  const [serviceId, setServiceId] = useState<ServiceId | null>(getService(category)?.id || null);
+  const [optionKey, setOptionKey] = useState<string | null>(null);
+  const [description, setDescription] = useState('');
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [coords, setCoords] = useState<Coords | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [city, setCity] = useState(user?.city || '');
+  const [area, setArea] = useState('');
+  const [details, setDetails] = useState('');
+  const [showCities, setShowCities] = useState(false);
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [budget, setBudget] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const autoFilled = useRef({ city: false, area: false });
 
-  // Step Calculation
-  const currentStep = !selectedDate ? 1 : !selectedTime ? 2 : !address.trim() ? 3 : 4;
+  const service = getService(serviceId);
+  const option = service?.options.find((o) => o.key === optionKey) || null;
 
-  const BOOKING_STEPS = [
-    { label: 'Option', stepNumber: 1 },
-    { label: 'Date & Time', stepNumber: 2 },
-    { label: 'Location', stepNumber: 3 },
-    { label: 'Payment', stepNumber: 4 },
-  ];
+  // Suggest the typical price of the chosen option as the starting budget.
+  useEffect(() => {
+    if (option) setBudget(String(option.price));
+  }, [option?.key]);
 
-  const PAYMENT_OPTIONS = [
-    { id: 'card',   label: 'Credit / Debit Card', icon: 'card-outline' as const,  color: '#1E3A5F' },
-    { id: 'paypal', label: 'PayPal',              icon: 'globe-outline' as const, color: '#003087' },
-    { id: 'apple',  label: Platform.OS === 'ios' ? 'Apple Pay' : 'Google Pay', icon: Platform.OS === 'ios' ? 'logo-apple' as const : 'logo-google' as const, color: '#000' },
-  ];
+  // Start the map on the customer's position.
+  useEffect(() => {
+    if (step === 3 && !coords) locateMe();
+  }, [step]);
 
-  const formatCardNumber = (t: string) => t.replace(/\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim();
-  const formatExpiry = (t: string) => { const c = t.replace(/\D/g,'').slice(0,4); return c.length >= 2 ? c.slice(0,2)+'/'+c.slice(2) : c; };
+  // Prefill city and district from the pin, unless the customer typed their own.
+  useEffect(() => {
+    if (!coords) return;
+    const timer = setTimeout(async () => {
+      const place = await reverseGeocode(coords);
+      if (place.city && (!city || autoFilled.current.city)) {
+        setCity(place.city);
+        autoFilled.current.city = true;
+      }
+      if (place.area && (!area || autoFilled.current.area)) {
+        setArea(place.area);
+        autoFilled.current.area = true;
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [coords?.latitude, coords?.longitude]);
 
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() + i + 1);
-    return { date: d.toISOString().split('T')[0], label: d.toLocaleDateString('en', { weekday: 'short', day: 'numeric', month: 'short' }) };
-  });
+  const days = useMemo(() => {
+    const locale = i18n.language === 'ar' ? 'ar-SA' : 'en-GB';
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      return { value: isoDate(d), label: i === 0 ? t('wizard.schedule.today') : i === 1 ? t('wizard.schedule.tomorrow') : d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' }) };
+    });
+  }, [i18n.language]);
 
-  const getToken = async () => {
-    try { return await require('@react-native-async-storage/async-storage').default.getItem('jwt_token'); }
-    catch { return null; }
+  // Same-day requests need at least two hours' notice.
+  const slots = useMemo(() => {
+    if (date !== days[0]?.value) return TIME_SLOTS;
+    const minHour = new Date().getHours() + 2;
+    return TIME_SLOTS.filter((s) => Number(s.slice(0, 2)) >= minHour);
+  }, [date, days]);
+
+  useEffect(() => {
+    if (time && !slots.includes(time)) setTime('');
+  }, [slots]);
+
+  async function locateMe() {
+    setLocating(true);
+    try {
+      const loc = await getCurrentLocation();
+      setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+      if (loc.isFallback) Alert.alert(t('wizard.location.title'), t('wizard.location.fallback'));
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  async function addPhotos(source: 'camera' | 'library') {
+    const remaining = MAX_PHOTOS - photos.length;
+    if (remaining <= 0) return;
+    try {
+      const permission = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(t('wizard.details.permissionTitle'), t('wizard.details.permissionBody'));
+        return;
+      }
+      const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.6 };
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync({ ...options, allowsMultipleSelection: true, selectionLimit: remaining });
+      if (result.canceled) return;
+      setPhotos((prev) => [...prev, ...result.assets.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName }))].slice(0, MAX_PHOTOS));
+    } catch {
+      Alert.alert(t('common.error'), t('workflow.errors.generic'));
+    }
+  }
+
+  const budgetValue = Number(budget);
+  const stepError = (): string | null => {
+    if (step === 1) return !service ? t('wizard.errors.service') : !option ? t('wizard.errors.option') : null;
+    if (step === 2) return description.trim().length < 10 ? t('wizard.errors.description') : null;
+    if (step === 3) return !coords ? t('wizard.errors.location') : !city ? t('wizard.errors.city') : details.trim().length < 5 ? t('wizard.errors.address') : null;
+    if (step === 4) return !date ? t('wizard.errors.date') : !time ? t('wizard.errors.time') : null;
+    if (step === 5) return !Number.isFinite(budgetValue) || budgetValue < 10 || budgetValue > 100000 ? t('wizard.errors.budget') : null;
+    return null;
   };
 
-  const handleBook = async () => {
-    if (!selectedDate) { Alert.alert('Error', 'Please select a date'); return; }
-    if (!selectedTime) { Alert.alert('Error', 'Please select a time'); return; }
-    if (!address.trim()) { Alert.alert('Error', 'Please enter your address'); return; }
-    if (paymentMethod === 'card' && (!cardNumber || !cardExpiry || !cardCVV)) {
-      Alert.alert('Error', 'Please fill in all card details'); return;
+  const next = () => {
+    const error = stepError();
+    if (error) {
+      Alert.alert(t('wizard.errors.title'), error);
+      return;
     }
+    if (step < STEP_COUNT) setStep(step + 1);
+    else submit();
+  };
 
-    setLoading(true);
+  async function submit() {
+    if (!service || !option || !coords) return;
+    setSubmitting(true);
     try {
-      const token = await getToken();
-      const price = service.options[selectedOption].price;
-      const res = await fetch(`${API}/bookings`, {
+      const fullAddress = [details.trim(), area.trim(), city].filter(Boolean).join(', ');
+      const created = await apiFetch('/bookings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          category: categoryKey, categoryName: service.name,
-          serviceOption: service.options[selectedOption].label,
-          price, scheduledDate: selectedDate,
-          scheduledTime: selectedTime,
-          address, notes,
+        body: {
+          category: service.id,
+          categoryName: service.nameEn,
+          serviceOption: t(`catalog.options.${option.key}`, { lng: 'en' }),
+          description: description.trim(),
+          price: budgetValue,
+          scheduledDate: date,
+          scheduledTime: time,
+          address: fullAddress,
+          city,
+          area: area.trim(),
+          latitude: coords.latitude,
+          longitude: coords.longitude,
           customerName: user?.name,
           customerPhone: user?.phone,
-          paymentMethod,
-        })
+        },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create booking');
 
-      // Go straight to the order so the customer can watch proposals arrive.
-      Alert.alert('✅', data.message || 'Your request has been sent to available providers.');
-      router.replace({ pathname: '/(customer)/booking/[id]', params: { id: data._id } });
+      // Photos are attached after the request exists; a failed upload does not lose the request.
+      let failedPhotos = 0;
+      for (const photo of photos) {
+        try {
+          const form = new FormData();
+          await appendFile(form, 'image', photo);
+          await apiFetch(`/bookings/${created._id}/photos`, { method: 'POST', form, timeoutMs: 60000 });
+        } catch {
+          failedPhotos++;
+        }
+      }
+      if (failedPhotos) Alert.alert(t('wizard.photosFailedTitle'), t('wizard.photosFailedBody', { count: failedPhotos }));
+      router.replace({ pathname: '/(customer)/booking/[id]', params: { id: created._id } });
     } catch (e: any) {
-      Alert.alert('Error', e.message);
-    } finally { setLoading(false); }
-  };
+      Alert.alert(t('common.error'), e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const steps = [1, 2, 3, 4, 5].map((n) => ({ stepNumber: n, label: t(`wizard.steps.${n}`) }));
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
-
-      {/* Top Bar */}
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#0F172A" />
-        </TouchableOpacity>
-        <View style={styles.topTitle}>
-          <Ionicons name={service.iconName} size={20} color="#2E8B57" />
-          <Text style={styles.topTitleText}>{service.name}</Text>
-        </View>
+        <BackButton onPress={() => (step > 1 ? setStep(step - 1) : router.back())} />
+        <Text style={styles.topTitle}>{t('workflow.requestService')}</Text>
         <View style={{ width: 40 }} />
       </View>
+      <StepIndicator currentStep={step} steps={steps} />
 
-      <StepIndicator currentStep={currentStep} steps={BOOKING_STEPS} />
-
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Service Options */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Select Service Type</Text>
-          {service.options.map((opt, i) => (
-            <TouchableOpacity key={i} style={[styles.optionRow, selectedOption === i && styles.optionActive]} onPress={() => setSelectedOption(i)}>
-              <View style={styles.optionLeft}>
-                <View style={[styles.radio, selectedOption === i && styles.radioActive]}>
-                  {selectedOption === i && <View style={styles.radioDot} />}
-                </View>
-                <Text style={[styles.optionLabel, selectedOption === i && styles.optionLabelActive]}>{opt.label}</Text>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {step === 1 && (
+            <>
+              <Text style={styles.heading}>{t('wizard.service.title')}</Text>
+              <View style={styles.grid}>
+                {SERVICES.map((s) => {
+                  const active = s.id === serviceId;
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.serviceCard, active && { borderColor: s.color, backgroundColor: `${s.color}12` }]}
+                      onPress={() => { setServiceId(s.id); setOptionKey(null); }}
+                      accessibilityState={{ selected: active }}
+                    >
+                      <View style={[styles.serviceIcon, { backgroundColor: `${s.color}22` }]}>
+                        <Ionicons name={s.icon} size={22} color={s.color} />
+                      </View>
+                      <Text style={[styles.serviceName, active && { color: s.color }]} numberOfLines={1}>{t(`categories.${s.id}`)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-              <Text style={[styles.optionPrice, selectedOption === i && styles.optionPriceActive]}>SAR {opt.price}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+              {service && (
+                <>
+                  <Text style={[styles.heading, { marginTop: 22 }]}>{t('wizard.service.option')}</Text>
+                  {service.options.map((o) => {
+                    const active = o.key === optionKey;
+                    return (
+                      <TouchableOpacity key={o.key} style={[styles.optionRow, active && styles.optionActive]} onPress={() => setOptionKey(o.key)}>
+                        <View style={[styles.radio, active && styles.radioActive]}>{active && <View style={styles.radioDot} />}</View>
+                        <Text style={[styles.optionLabel, active && { color: Colors.accent }]}>{t(`catalog.options.${o.key}`)}</Text>
+                        <Text style={styles.optionPrice}>{t('wizard.service.from', { price: o.price })}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <Text style={styles.hint}>{t('wizard.service.priceHint')}</Text>
+                </>
+              )}
+            </>
+          )}
 
-        {/* Date Selection */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Ionicons name="calendar-outline" size={18} color="#0F172A" />
-            <Text style={styles.sectionLabel}>Select Date</Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {days.map((d) => (
-              <TouchableOpacity key={d.date} style={[styles.dayChip, selectedDate === d.date && styles.dayChipActive]} onPress={() => setSelectedDate(d.date)}>
-                <Text style={[styles.dayText, selectedDate === d.date && styles.dayTextActive]}>{d.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* Time Selection */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Ionicons name="time-outline" size={18} color="#0F172A" />
-            <Text style={styles.sectionLabel}>Select Time</Text>
-          </View>
-          <View style={styles.timeGrid}>
-            {TIMES.map((t) => (
-              <TouchableOpacity key={t} style={[styles.timeChip, selectedTime === t && styles.timeChipActive]} onPress={() => setSelectedTime(t)}>
-                <Text style={[styles.timeText, selectedTime === t && styles.timeTextActive]}>{t}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Address */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Ionicons name="location-outline" size={18} color="#0F172A" />
-            <Text style={styles.sectionLabel}>Service Address / العنوان</Text>
-          </View>
-          <TextInput style={styles.input} placeholder="Enter full address (District, Street, City)" placeholderTextColor="#94A3B8" value={address} onChangeText={setAddress} multiline />
-        </View>
-
-        {/* Notes */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Ionicons name="create-outline" size={18} color="#0F172A" />
-            <Text style={styles.sectionLabel}>Notes (Optional)</Text>
-          </View>
-          <TextInput style={[styles.input, { height: 80 }]} placeholder="Any special instructions..." placeholderTextColor="#94A3B8" value={notes} onChangeText={setNotes} multiline />
-        </View>
-
-        {/* Payment Method */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Ionicons name="card-outline" size={18} color="#0F172A" />
-            <Text style={styles.sectionLabel}>Payment Method</Text>
-          </View>
-          <View style={styles.payGrid}>
-            {PAYMENT_OPTIONS.map((pm) => (
-              <TouchableOpacity
-                key={pm.id}
-                style={[styles.payOption, paymentMethod === pm.id && styles.payOptionActive]}
-                onPress={() => setPaymentMethod(pm.id)}
-              >
-                <Ionicons name={pm.icon} size={20} color={paymentMethod === pm.id ? '#fff' : pm.color} />
-                <Text style={[styles.payOptionText, paymentMethod === pm.id && styles.payOptionTextActive]}>
-                  {pm.label}
-                </Text>
-                {paymentMethod === pm.id && <Ionicons name="checkmark-circle" size={14} color="#fff" />}
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {paymentMethod === 'card' && (
-            <View style={styles.cardInputs}>
+          {step === 2 && (
+            <>
+              <Text style={styles.heading}>{t('wizard.details.title')}</Text>
               <TextInput
-                style={styles.cardInput}
-                placeholder="Card Number"
-                placeholderTextColor="#94A3B8"
-                value={cardNumber}
-                onChangeText={(t) => setCardNumber(formatCardNumber(t))}
-                keyboardType="number-pad" maxLength={19}
+                style={[styles.input, { minHeight: 120, textAlignVertical: 'top' }]}
+                placeholder={t('wizard.details.placeholder')}
+                placeholderTextColor={Colors.textMuted}
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                maxLength={2000}
               />
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TextInput
-                  style={[styles.cardInput, { flex: 1 }]}
-                  placeholder="MM/YY"
-                  placeholderTextColor="#94A3B8"
-                  value={cardExpiry}
-                  onChangeText={(t) => setCardExpiry(formatExpiry(t))}
-                  keyboardType="number-pad" maxLength={5}
-                />
-                <TextInput
-                  style={[styles.cardInput, { flex: 1 }]}
-                  placeholder="CVV"
-                  placeholderTextColor="#94A3B8"
-                  value={cardCVV} onChangeText={setCardCVV}
-                  keyboardType="number-pad" maxLength={3} secureTextEntry
-                />
+              <Text style={[styles.heading, { marginTop: 22 }]}>{t('wizard.details.photos')}</Text>
+              <Text style={styles.hint}>{t('wizard.details.photosHint', { max: MAX_PHOTOS })}</Text>
+              <View style={styles.photoRow}>
+                {photos.map((p, i) => (
+                  <View key={`${p.uri}-${i}`} style={styles.photo}>
+                    <Image source={{ uri: p.uri }} style={StyleSheet.absoluteFill} />
+                    <TouchableOpacity style={styles.photoRemove} onPress={() => setPhotos(photos.filter((_, idx) => idx !== i))} accessibilityLabel={t('common.delete')}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {photos.length < MAX_PHOTOS && (
+                  <>
+                    {Platform.OS !== 'web' && (
+                      <TouchableOpacity style={styles.photoAdd} onPress={() => addPhotos('camera')}>
+                        <Ionicons name="camera-outline" size={24} color={Colors.accent} />
+                        <Text style={styles.photoAddText}>{t('wizard.details.camera')}</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={styles.photoAdd} onPress={() => addPhotos('library')}>
+                      <Ionicons name="images-outline" size={24} color={Colors.accent} />
+                      <Text style={styles.photoAddText}>{t('wizard.details.gallery')}</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
-              <View style={styles.secureRow}>
-                <Ionicons name="lock-closed" size={12} color="#94A3B8" />
-                <Text style={styles.secureText}>Secured by 256-bit SSL</Text>
-              </View>
-            </View>
+            </>
           )}
 
-          {paymentMethod === 'paypal' && (
-            <View style={styles.paypalNote}>
-              <Ionicons name="information-circle-outline" size={16} color="#003087" />
-              <Text style={styles.paypalNoteText}>You will be redirected to PayPal to complete payment after booking.</Text>
-            </View>
+          {step === 3 && (
+            <>
+              <Text style={styles.heading}>{t('wizard.location.title')}</Text>
+              <Text style={styles.hint}>{t(Platform.OS === 'web' ? 'wizard.location.webHint' : 'wizard.location.hint')}</Text>
+              <LocationPicker value={coords} onChange={setCoords} />
+              <TouchableOpacity style={styles.locateBtn} onPress={locateMe} disabled={locating}>
+                {locating ? <ActivityIndicator size="small" color={Colors.accent} /> : <Ionicons name="locate" size={18} color={Colors.accent} />}
+                <Text style={styles.locateText}>{t('wizard.location.useMine')}</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.label}>{t('auth.city')}</Text>
+              <TouchableOpacity style={[styles.input, styles.selectInput]} onPress={() => setShowCities(true)}>
+                <Text style={{ color: city ? Colors.textPrimary : Colors.textMuted, fontSize: 15 }}>{city ? cityLabel(t, city) : t('auth.selectCity')}</Text>
+                <Ionicons name="chevron-down" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+              <Text style={styles.label}>{t('wizard.location.area')}</Text>
+              <TextInput style={styles.input} value={area} onChangeText={(v) => { setArea(v); autoFilled.current.area = false; }} placeholder={t('wizard.location.areaPlaceholder')} placeholderTextColor={Colors.textMuted} maxLength={120} />
+              <Text style={styles.label}>{t('wizard.location.details')}</Text>
+              <TextInput style={styles.input} value={details} onChangeText={setDetails} placeholder={t('wizard.location.detailsPlaceholder')} placeholderTextColor={Colors.textMuted} maxLength={300} />
+              <View style={styles.privacyNote}>
+                <Ionicons name="shield-checkmark-outline" size={16} color={Colors.accent} />
+                <Text style={styles.privacyText}>{t('wizard.location.privacy')}</Text>
+              </View>
+            </>
           )}
-        </View>
 
-        {/* Summary */}
-        <View style={styles.summary}>
-          <Text style={styles.summaryTitle}>Order Summary</Text>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Service</Text>
-            <Text style={styles.summaryValue}>{service.options[selectedOption].label}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Date & Time</Text>
-            <Text style={styles.summaryValue}>{selectedDate || '—'} {selectedTime}</Text>
-          </View>
-          <View style={[styles.summaryRow, { borderBottomWidth: 0, marginTop: 4 }]}>
-            <Text style={styles.summaryLabel}>Total Amount</Text>
-            <Text style={styles.summaryTotal}>SAR {service.options[selectedOption].price}</Text>
-          </View>
-        </View>
+          {step === 4 && (
+            <>
+              <Text style={styles.heading}>{t('booking.selectDate')}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {days.map((d) => (
+                  <TouchableOpacity key={d.value} style={[styles.chip, date === d.value && styles.chipActive]} onPress={() => setDate(d.value)}>
+                    <Text style={[styles.chipText, date === d.value && styles.chipTextActive]}>{d.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <Text style={[styles.heading, { marginTop: 22 }]}>{t('booking.selectTime')}</Text>
+              {slots.length === 0 ? (
+                <Text style={styles.hint}>{t('wizard.schedule.noSlots')}</Text>
+              ) : (
+                <View style={styles.timeGrid}>
+                  {slots.map((s) => (
+                    <TouchableOpacity key={s} style={[styles.chip, time === s && styles.chipActive]} onPress={() => setTime(s)}>
+                      <Text style={[styles.chipText, time === s && styles.chipTextActive]}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
 
-        <TouchableOpacity style={styles.bookBtn} onPress={handleBook} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : (
-            <View style={styles.btnInner}>
-              <Ionicons name="checkmark-circle" size={20} color="#fff" />
-              <Text style={styles.bookBtnText}>Confirm Booking · SAR {service.options[selectedOption].price}</Text>
-            </View>
+          {step === 5 && service && option && (
+            <>
+              <Text style={styles.heading}>{t('wizard.review.budget')}</Text>
+              <View style={styles.budgetBox}>
+                <Text style={styles.budgetCurrency}>{t('common.sarSymbol')}</Text>
+                <TextInput style={styles.budgetInput} value={budget} onChangeText={(v) => setBudget(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" maxLength={7} />
+              </View>
+              <Text style={styles.hint}>{t('wizard.review.budgetHint', { price: option.price })}</Text>
+
+              <View style={styles.summary}>
+                <SummaryRow label={t('wizard.review.service')} value={`${t(`categories.${service.id}`)} · ${t(`catalog.options.${option.key}`)}`} />
+                <SummaryRow label={t('wizard.review.when')} value={`${days.find((d) => d.value === date)?.label || date} · ${time}`} />
+                <SummaryRow label={t('wizard.review.where')} value={[details, area, cityLabel(t, city)].filter(Boolean).join(', ')} />
+                <SummaryRow label={t('wizard.review.photos')} value={String(photos.length)} />
+                <Text style={styles.summaryDesc} numberOfLines={3}>{description}</Text>
+              </View>
+
+              <View style={styles.howItWorks}>
+                {['1', '2', '3'].map((n) => (
+                  <View key={n} style={styles.howRow}>
+                    <View style={styles.howDot}><Text style={styles.howDotText}>{n}</Text></View>
+                    <Text style={styles.howText}>{t(`wizard.review.how${n}`)}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <View style={styles.footer}>
+        <TouchableOpacity style={[styles.nextBtn, submitting && { opacity: 0.7 }]} onPress={next} disabled={submitting}>
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Text style={styles.nextText}>{step < STEP_COUNT ? t('common.next') : t('wizard.review.submit')}</Text>
+              <Ionicons name={step < STEP_COUNT ? 'arrow-forward' : 'paper-plane'} size={18} color="#fff" style={step < STEP_COUNT ? flip : undefined} />
+            </>
           )}
         </TouchableOpacity>
-        <View style={{ height: 40 }} />
-      </ScrollView>
+      </View>
+
+      <CityPicker visible={showCities} selected={city ? [city] : []} onChange={(v) => { setCity(v[0]); autoFilled.current.city = false; }} onClose={() => setShowCities(false)} />
     </SafeAreaView>
   );
 }
 
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue} numberOfLines={2}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  payGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  payOption: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
-  payOptionActive: { backgroundColor: '#1E3A5F', borderColor: '#1E3A5F' },
-  payOptionText: { fontSize: 12, fontWeight: '700', color: '#475569' },
-  payOptionTextActive: { color: '#fff' },
-  cardInputs: { gap: 10, marginTop: 4 },
-  cardInput: { borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 15, color: '#0F172A' },
-  secureRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  secureText: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-  paypalNote: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#EFF6FF', padding: 12, borderRadius: 12, marginTop: 4 },
-  paypalNoteText: { fontSize: 12, color: '#1D4ED8', fontWeight: '600', flex: 1, lineHeight: 18 },
-  cashNote: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F0FDF4', padding: 12, borderRadius: 12, marginTop: 4 },
-  cashNoteText: { fontSize: 12, color: '#2E8B57', fontWeight: '600', flex: 1, lineHeight: 18 },
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-  topTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  topTitleText: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  section: { backgroundColor: '#fff', marginHorizontal: 16, marginTop: 14, borderRadius: 20, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  sectionLabel: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
-  optionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', marginBottom: 8 },
-  optionActive: { borderColor: '#2E8B57', backgroundColor: '#F0FDF4' },
-  optionLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center' },
-  radioActive: { borderColor: '#2E8B57' },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#2E8B57' },
-  optionLabel: { fontSize: 15, color: '#334155', fontWeight: '600' },
-  optionLabelActive: { color: '#2E8B57' },
-  optionPrice: { fontSize: 15, fontWeight: '700', color: '#64748B' },
-  optionPriceActive: { color: '#2E8B57' },
-  dayChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, backgroundColor: '#F1F5F9', marginRight: 8, borderWidth: 1.5, borderColor: '#E2E8F0' },
-  dayChipActive: { backgroundColor: '#1E3A5F', borderColor: '#1E3A5F' },
-  dayText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  dayTextActive: { color: '#fff' },
+  container: { flex: 1, backgroundColor: Colors.background },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
+  topTitle: { fontSize: 18, fontWeight: '800', color: Colors.textPrimary },
+  content: { padding: 16, paddingBottom: 40 },
+  heading: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary, marginBottom: 12, textAlign: 'left' },
+  hint: { fontSize: 13, color: Colors.textSecondary, marginBottom: 12, lineHeight: 19, textAlign: 'left' },
+  label: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary, marginTop: 16, marginBottom: 6, textAlign: 'left' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  serviceCard: { width: '47%', flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 16, backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.border },
+  serviceIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  serviceName: { flex: 1, fontSize: 14, fontWeight: '700', color: Colors.textPrimary },
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: '#fff', marginBottom: 8 },
+  optionActive: { borderColor: Colors.accent, backgroundColor: '#F0FDF4' },
+  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#CBD5E1', alignItems: 'center', justifyContent: 'center' },
+  radioActive: { borderColor: Colors.accent },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.accent },
+  optionLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: Colors.textPrimary, textAlign: 'left' },
+  optionPrice: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary },
+  input: { backgroundColor: '#fff', borderRadius: 14, padding: 14, fontSize: 15, color: Colors.textPrimary, borderWidth: 1, borderColor: Colors.border, textAlign: 'left' },
+  selectInput: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  photo: { width: 82, height: 82, borderRadius: 14, overflow: 'hidden', backgroundColor: Colors.border },
+  photoRemove: { position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(15,23,42,0.7)', alignItems: 'center', justifyContent: 'center' },
+  photoAdd: { width: 82, height: 82, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.accent, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#F0FDF4' },
+  photoAddText: { fontSize: 11, fontWeight: '700', color: Colors.accent },
+  locateBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0' },
+  locateText: { color: Colors.accent, fontWeight: '800' },
+  privacyNote: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#ECFDF5' },
+  privacyText: { flex: 1, fontSize: 12, color: '#065F46', lineHeight: 18, textAlign: 'left' },
+  chip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.border },
+  chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  chipText: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary },
+  chipTextActive: { color: '#fff' },
   timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  timeChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1.5, borderColor: '#E2E8F0' },
-  timeChipActive: { backgroundColor: '#2E8B57', borderColor: '#2E8B57' },
-  timeText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  timeTextActive: { color: '#fff' },
-  input: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 14, fontSize: 15, color: '#0F172A', borderWidth: 1, borderColor: '#E2E8F0' },
-  summary: { marginHorizontal: 16, marginTop: 14, backgroundColor: '#fff', borderRadius: 20, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  summaryTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 14 },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  summaryLabel: { fontSize: 14, color: '#64748B' },
-  summaryValue: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  summaryTotal: { fontSize: 22, fontWeight: '900', color: '#2E8B57' },
-  bookBtn: { margin: 16, backgroundColor: '#2E8B57', padding: 20, borderRadius: 18, alignItems: 'center', shadowColor: '#2E8B57', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 },
-  btnInner: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  bookBtnText: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  budgetBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 16, borderWidth: 1.5, borderColor: Colors.accent },
+  budgetCurrency: { fontSize: 18, fontWeight: '800', color: Colors.accent },
+  budgetInput: { flex: 1, fontSize: 28, fontWeight: '900', color: Colors.textPrimary, paddingVertical: 12, textAlign: 'left' },
+  summary: { backgroundColor: '#fff', borderRadius: 18, padding: 16, marginTop: 10, borderWidth: 1, borderColor: Colors.border },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
+  summaryLabel: { fontSize: 13, color: Colors.textSecondary },
+  summaryValue: { flex: 1, fontSize: 13, fontWeight: '700', color: Colors.textPrimary, textAlign: 'right' },
+  summaryDesc: { fontSize: 13, color: Colors.textSecondary, marginTop: 10, lineHeight: 19, textAlign: 'left' },
+  howItWorks: { marginTop: 16, gap: 10, padding: 16, borderRadius: 18, backgroundColor: '#EFF6FF' },
+  howRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  howDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  howDotText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  howText: { flex: 1, fontSize: 13, color: '#1E3A8A', fontWeight: '600', lineHeight: 18, textAlign: 'left' },
+  footer: { padding: 16, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: Colors.borderLight },
+  nextBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: Colors.accent, paddingVertical: 16, borderRadius: 16 },
+  nextText: { color: '#fff', fontSize: 16, fontWeight: '900' },
 });

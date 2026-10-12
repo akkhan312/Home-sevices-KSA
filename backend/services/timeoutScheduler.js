@@ -1,4 +1,5 @@
 const supabase = require('../supabase');
+const { notifyUser, notifyAdmins } = require('./access');
 
 /**
  * Checks for completed jobs where customer hasn't confirmed after 24h & 48h.
@@ -6,8 +7,6 @@ const supabase = require('../supabase');
 async function checkConfirmationTimeouts(io) {
   try {
     const now = new Date();
-    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
 
     // 1. Fetch bookings completed by provider where customer hasn't confirmed yet
     const { data: bookings, error } = await supabase
@@ -29,14 +28,12 @@ async function checkConfirmationTimeouts(io) {
           .update({ timeout_notified_24h: true })
           .eq('id', b.id);
 
-        await supabase.from('notifications').insert({
-          user_id: b.customer_id,
-          title: '⏳ Confirmation Needed: Job Completed',
-          body: `Provider marked your ${b.category_name} job as complete 24h ago. Please confirm to release payment.`,
-          type: 'customer_confirmation_reminder',
-          read: false,
-          data: { bookingId: b.id }
-        });
+        await notifyUser(
+          b.customer_id,
+          '⏳ Confirmation Needed: Job Completed',
+          `Provider marked your ${b.category_name} job as complete 24h ago. Please confirm to release payment.`,
+          { type: 'customer_confirmation_reminder', data: { bookingId: b.id } }
+        );
 
         if (io) {
           io.to(`user:${b.customer_id}`).emit('notification_created', {
@@ -55,28 +52,20 @@ async function checkConfirmationTimeouts(io) {
           .eq('id', b.id);
 
         // Notify Customer second time
-        await supabase.from('notifications').insert({
-          user_id: b.customer_id,
-          title: '⚠️ Final Reminder: Confirm Service Completion',
-          body: `It has been 48h since service completion. Please confirm or report any issues before admin payment release.`,
-          type: 'customer_confirmation_final',
-          read: false,
-          data: { bookingId: b.id }
-        });
+        await notifyUser(
+          b.customer_id,
+          '⚠️ Final Reminder: Confirm Service Completion',
+          'It has been 48h since service completion. Please confirm or report any issues before admin payment release.',
+          { type: 'customer_confirmation_final', data: { bookingId: b.id } }
+        );
 
         // Notify Admin users
-        const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin');
-        if (admins && admins.length > 0) {
-          const adminNotifs = admins.map((adm) => ({
-            user_id: adm.id,
-            title: `🚨 Customer Timeout (48h): Booking #${b.id.slice(0, 8)}`,
-            body: `Customer ${b.customer_name || ''} has not responded to completion for 48h. Action required for payment release.`,
-            type: 'admin_timeout_alert',
-            read: false,
-            data: { bookingId: b.id }
-          }));
-          await supabase.from('notifications').insert(adminNotifs);
-        }
+        await notifyAdmins({
+          title: `🚨 Customer Timeout (48h): Booking #${b.order_number || b.id.slice(0, 8)}`,
+          body: `Customer ${b.customer_name || ''} has not responded to completion for 48h. Action required for payment release.`,
+          type: 'admin_timeout_alert',
+          data: { bookingId: b.id }
+        });
 
         if (io) {
           io.to('role:admin').emit('payment_pending', {
